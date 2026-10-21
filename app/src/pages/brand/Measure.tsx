@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, Clock, FileText, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock, FileText, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
 import { hasMismatch, isDiscovery } from '@/lib/metrics'
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
@@ -13,7 +13,7 @@ import { STATE_LABEL } from '@/lib/publishing'
 import { FIELD_PHRASE } from '@/lib/brandStatus'
 import { RecheckResult } from '@/components/discovery'
 import { EvidenceDisclosure } from '@/components/brand'
-import { KpiCard, PageHeader, PermButton } from '@/components/domain'
+import { KpiCard, NextStep, PageHeader, PermButton } from '@/components/domain'
 import { Table, Td, Th, Tr } from '@/components/ui/table'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -125,7 +125,7 @@ function DeltaCard({ title, subtitle, series, betterWhen, unit, icon, color }: {
 }
 
 export default function MeasurePage() {
-  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
+  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, plans, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
   const disc = useDiscovery()
   const first = useRef(release !== 'V2')
   const ran = useRef(false)
@@ -149,6 +149,7 @@ export default function MeasurePage() {
   })
   const successes = mine.filter((p) => p.state === 'success')
   const latestSuccess = successes.map((p) => p.recordedAt).sort().pop()
+  const awaiting = auditId ? disc.latest.filter((o) => disc.record(o.id)?.plan?.status === 'awaiting_brand_approval').length + issues.filter((i) => i.auditId === auditId && plans[i.id]?.status === 'awaiting_brand_approval').length : 0
   const needsRecheck = !!latestSuccess && (!lastRecheck || lastRecheck.createdAt < latestSuccess)
 
   useEffect(() => {
@@ -201,6 +202,12 @@ export default function MeasurePage() {
         subtitle="Source updates are shown separately from later sampled AI answers. Improvement in a sample isn’t proof the updates caused it."
         actions={
           <div className="flex gap-2">
+            <Button asChild>
+              <Link to="/improve">
+                <ArrowLeft />
+                Back to fixes
+              </Link>
+            </Button>
             <PermButton perm="requestCheck" onClick={() => { const r = runRecheck(latestAudit.id); toast.success(`Follow-up check ${r.wave} sampled (simulated)`) }} disabled={!successes.length}>
               <RadioTower />
               Request a new follow-up check
@@ -389,6 +396,24 @@ export default function MeasurePage() {
         </>
       )}
 
+      {approvedKeys.size > 0 &&
+        (awaiting > 0 ? (
+          <NextStep
+            chapter="02 Improve"
+            title={`${awaiting} more proposal${awaiting === 1 ? '' : 's'} still need your decision`}
+            description="Approve the remaining fixes, then come back here after the next follow-up check."
+            to="/improve"
+            cta="Review remaining fixes"
+          />
+        ) : (
+          <NextStep
+            chapter="01 Detect"
+            title="Every proposal has a decision"
+            description="Run a fresh standard check to set a new baseline, or add more of your centres."
+            to="/detect"
+            cta="Go to Detect"
+          />
+        ))}
       <div className="flex flex-wrap gap-2">
         <Button asChild>
           <Link to="/reports">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Issue, Task } from '@/data/types'
 import { LOCATION_BY_ID } from '@/data/seed'
@@ -12,7 +12,7 @@ import { aggregate, AGGREGATE_LABEL, PERMISSION_LABEL, STATE_LABEL, targetPermis
 import { CATEGORY_LABEL } from '@/lib/discovery'
 import { FIELD_PHRASE } from '@/lib/brandStatus'
 import { FactComparison } from '@/components/brand'
-import { KpiCard, PageHeader, PermButton } from '@/components/domain'
+import { KpiCard, NextStep, PageHeader, PermButton } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -252,7 +252,17 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
           )
         })}
       </ul>
-      {approved && <p className="border-t border-brand-line px-4 py-2.5 text-[12.5px] text-muted">Recorded AI answers are unchanged. A source update doesn’t mean any AI answer has changed — that’s measured in 03 Measure.</p>}
+      {approved && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-brand-line px-4 py-2.5">
+          <p className="min-w-0 flex-1 text-[12.5px] text-muted">Recorded AI answers are unchanged. A source update doesn’t mean any AI answer has changed — that’s measured in 03 Measure.</p>
+          <Button size="sm" asChild>
+            <Link to="/measure">
+              See what changed
+              <ArrowRight />
+            </Link>
+          </Button>
+        </div>
+      )}
       <Dialog
         open={!!dlg}
         onOpenChange={(o) => !o && setDlg(null)}
@@ -503,6 +513,14 @@ export default function ImprovePage() {
       <PageHeader
         title="ProManage has prepared improvements"
         subtitle="From your latest standard check. ProManage checked the business information, listings, genuine reviews, location data and local content it manages — you review and authorize."
+        actions={
+          <Button asChild>
+            <Link to="/detect">
+              <ArrowLeft />
+              Back to findings
+            </Link>
+          </Button>
+        }
       />
       {goal && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-line bg-brand-soft px-4 py-2.5 text-[13.5px] text-ink">
@@ -522,13 +540,22 @@ export default function ImprovePage() {
         <KpiCard label="Sources updated" value={latestByTask.filter((p) => p.state === 'success').length} detail={`of ${latestByTask.length} targets`} icon={<CheckCircle2 />} tone="teal" definition="Connected, write-authorized targets updated after your authorization. Demo: simulated publication." footer="AI answers are unchanged until rechecked" />
         <KpiCard label="Needs follow-up" value={latestByTask.filter((p) => p.state !== 'success').length} icon={<RotateCcw />} tone="neutral" definition="Targets that need ProManage, a site admin or an external owner — never marked updated." footer="Handoffs, access or failed attempts" />
       </div>
+      {latestByTask.length > 0 && (
+        <NextStep
+          chapter="03 Measure"
+          title="See what changed after your approvals"
+          description={`${latestByTask.filter((p) => p.state === 'success').length} source${latestByTask.filter((p) => p.state === 'success').length === 1 ? '' : 's'} updated so far. ProManage runs a matched follow-up check with the same questions and centres.${awaiting ? ` ${awaiting} proposal${awaiting === 1 ? '' : 's'} still await your decision.` : ''}`}
+          to="/measure"
+          cta="See before and after"
+        />
+      )}
       {items.length === 0 ? (
         <Card>
           <EmptyState icon={<Sparkles />} title="No proposals yet" description="ProManage prepares proposals when your standard check has confirmed, controllable gaps." />
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <Card className="self-start xl:sticky xl:top-[84px]">
+          <Card className="scrollbar-thin self-start xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto">
             <CardHeader title="Proposals" description="Grouped by location · one queue for both finding types" />
             <div className="border-b border-line px-4 py-2.5">
               <Segmented

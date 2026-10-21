@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, BadgeCheck, CircleDashed, CircleHelp, Info, ScanSearch, ShieldAlert, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BadgeCheck, CircleDashed, CircleHelp, Info, ScanSearch, ShieldAlert, Sparkles } from 'lucide-react'
 import type { ClaimEvaluation, ControlledChannel, ExtractedClaim, IssueCategory, Observation, Severity, TaskStatus, VerificationStatus } from '@/data/types'
 import type { IssueStatus, Ratio } from '@/lib/metrics'
 import { Badge } from './ui/badge'
@@ -176,6 +176,28 @@ export function MentionBadge({ mentioned, branded, brandOnly }: { mentioned: boo
     </Badge>
   ) : (
     <Badge tone="neutral">Not mentioned</Badge>
+  )
+}
+
+/** Hand-off card that moves the brand to the next chapter of Detect → Improve → Measure. */
+export function NextStep({ chapter, title, description, to, cta, secondary }: { chapter: string; title: ReactNode; description?: ReactNode; to: string; cta: string; secondary?: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-brand-line bg-brand-soft px-5 py-4 sm:flex-row sm:items-center" data-next-step={chapter}>
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-brand">Next · {chapter}</p>
+        <p className="mt-0.5 text-[16px] font-semibold text-ink">{title}</p>
+        {description && <p className="mt-0.5 text-[13.5px] text-body">{description}</p>}
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {secondary}
+        <Button variant="primary" asChild>
+          <Link to={to}>
+            {cta}
+            <ArrowRight />
+          </Link>
+        </Button>
+      </div>
+    </div>
   )
 }
 

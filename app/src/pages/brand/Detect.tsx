@@ -13,7 +13,7 @@ import { runSimulatedAudit } from '@/services/mockAuditService'
 import { EvidenceDisclosure, FactComparison, StageBadge } from '@/components/brand'
 import { NotAnErrorNote, RelevanceControls } from '@/components/discovery'
 import { FocusOnQuestion } from '@/components/goals'
-import { KpiCard, PageHeader } from '@/components/domain'
+import { KpiCard, NextStep, PageHeader } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -206,12 +206,12 @@ type Finding =
   | { kind: 'acc'; key: string; locationId: string; obs?: Observation; v: BrandView; claim?: string }
 
 function FindingDetail({ f, onClose }: { f: Finding; onClose: () => void }) {
-  const { hasRelease } = useStore()
   const navigate = useNavigate()
   const loc = LOCATION_BY_ID[f.locationId]
-  const next = f.kind === 'disc' ? (f.oppId && f.el.status === 'eligible' ? (hasRelease('V1') ? `/improve#disc:${f.oppId}` : `/attention/discovery/${f.oppId}`) : null) : hasRelease('V1') ? `/improve#acc:${f.v.issue.id}` : `/attention/${f.v.issue.id}`
+  const next = f.kind === 'disc' ? (f.oppId && f.el.status === 'eligible' ? `/improve#disc:${f.oppId}` : null) : `/improve#acc:${f.v.issue.id}`
   return (
-    <Card className="self-start xl:sticky xl:top-[84px]">
+    // Pinned beside the table on wide screens, so it scrolls on its own when the AI answer is long.
+    <Card className="scrollbar-thin self-start xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto">
       <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div className="min-w-0">
           <p className="text-[12px] text-muted">{loc.name}</p>
@@ -241,13 +241,16 @@ function FindingDetail({ f, onClose }: { f: Finding; onClose: () => void }) {
             <p className="text-[13px] text-body">An answer without checkable facts isn’t proof that information is correct.</p>
           </>
         )}
-        {f.obs && <EvidenceDisclosure obs={f.obs} title="View original AI answer" />}
         {next && (
-          <Button variant="primary" onClick={() => navigate(next)}>
-            {hasRelease('V1') ? 'See suggested improvement' : 'Review finding'}
-            <ArrowRight />
-          </Button>
+          <div className="rounded-lg border border-brand-line bg-brand-soft px-3.5 py-3">
+            <p className="text-[13px] text-body">ProManage has prepared a fix for this in 02 Improve.</p>
+            <Button variant="primary" className="mt-2 w-full sm:w-auto" onClick={() => navigate(next)}>
+              See the suggested fix
+              <ArrowRight />
+            </Button>
+          </div>
         )}
+        {f.obs && <EvidenceDisclosure obs={f.obs} title="View original AI answer" />}
       </div>
     </Card>
   )
@@ -302,6 +305,12 @@ function Results() {
           · {audit.locationIds.length} centres · {audit.promptIds.length} suggested questions each · {obs.length} sampled answers · demo AI search (Surface A) · {fmtDate(audit.createdAt)} · one answer per question
         </span>
         <Badge tone="neutral">Simulated</Badge>
+        <Button variant="primary" size="sm" className="ml-auto" asChild>
+          <Link to="/improve">
+            Review suggested fixes
+            <ArrowRight />
+          </Link>
+        </Button>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Locations checked" value={`${audit.locationIds.length}`} detail="of 150" icon={<MapPin />} tone="neutral" definition="Pilot centres included in this standard check." footer={`${obs.length} sampled answers`} />
@@ -412,6 +421,13 @@ function Results() {
         </Card>
         {current && <FindingDetail f={current} onClose={() => setSelected(null)} />}
       </div>
+      <NextStep
+        chapter="02 Improve"
+        title="ProManage has prepared fixes for these findings"
+        description={`${opps} discovery opportunit${opps === 1 ? 'y' : 'ies'} and ${accViews.length} accuracy finding${accViews.length === 1 ? '' : 's'}. Review the exact changes and approve them in one step. Nothing is published until you do.`}
+        to="/improve"
+        cta="Review and approve fixes"
+      />
       <FocusOnQuestion />
       <div className="flex flex-wrap gap-2">
         <Button asChild>

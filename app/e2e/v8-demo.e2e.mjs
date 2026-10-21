@@ -67,6 +67,9 @@ try {
   await click('Details')
   await click('View original AI answer')
   check('Original AI answer evidence opens in the detail panel', await has('Question asked:'))
+  check('Finding panel scrolls on its own when the answer is long', await ev(`(() => { const c = [...document.querySelectorAll('main [class*="xl:sticky"]')].find((e) => e.innerText.includes('View original AI answer')); return !!c && getComputedStyle(c).overflowY === 'auto' && c.scrollHeight > c.clientHeight })()`))
+  check('Finding panel links straight to its fix in 02 Improve', await exists('See the suggested fix'))
+  check('Detect hands off to 02 Improve (banner + next step)', (await exists('Review suggested fixes')) && (await exists('Review and approve fixes')))
   await t.shot(SHOTS, '02-detect-whitefield')
 
   step('Scene 4 · Click 02 Improve → V1 unlocks, both proposals ready')
@@ -112,6 +115,8 @@ try {
   check('Accuracy correction published to connected website', s4.publications.some((p) => p.proposalKey === 'acc:issue-saturday-tours' && p.state === 'success'))
   check('Website snapshot updated, AI answer untouched', s4.sourceUpdates['whitefield-web:saturdayTours']?.value === 'Saturday tours 10 AM–1 PM')
   check('Idempotent: re-applying adds no duplicate attempts', s4.publications.filter((p) => p.proposalKey === 'acc:issue-saturday-tours').length === new Set(s4.publications.filter((p) => p.proposalKey === 'acc:issue-saturday-tours').map((p) => p.taskId)).size)
+  check('Approved proposal links on to 03 Measure', (await exists('See what changed')) && (await exists('See before and after')))
+  check('Improve links back to Detect findings', await exists('Back to findings'))
   await t.shot(SHOTS, '04-improve-published')
 
   step('UC-06/07 · Decline, request changes, partial failure + retry')
@@ -151,6 +156,7 @@ try {
   check('Persisting issue stays visible (Marathahalli status still appears)', await has('Incorrect statement still appears'))
   check('No causal / guarantee language', (await has('not proof')) && !(await has('guaranteed')))
   check('Timeline present', await has('Timeline') && await has('You authorized'))
+  check('Measure links back to fixes and to the next step', (await exists('Back to fixes')) && ((await exists('Review remaining fixes')) || (await exists('Go to Detect'))))
   await t.shot(SHOTS, '05-measure')
 
   step('Scene 8 · Optional: Target a specific question')
