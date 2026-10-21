@@ -204,7 +204,7 @@ export function RecommendationCard({ rec, locationId, brand, published }: { rec:
             <ul className="mt-1 flex flex-wrap gap-1.5">
               {claims.map((f) => (
                 <li key={f!.id}>
-                  <Badge tone={f!.verificationStatus === 'verified' ? 'outline' : 'warning'}>
+                  <Badge tone={f!.verificationStatus === 'verified' ? 'outline' : 'warning'} className="max-w-full whitespace-normal">
                     {f!.label}: {f!.value ?? 'not verified'}
                   </Badge>
                 </li>

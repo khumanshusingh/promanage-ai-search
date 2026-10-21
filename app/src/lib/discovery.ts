@@ -42,7 +42,8 @@ export const NOT_RELEVANT_REASONS: Record<NotRelevantReason, string> = {
 
 /** Services a centre has said it offers but that aren't in the approved record yet (simulated fixtures). */
 export const SERVICE_CANDIDATES: Record<string, { promptId: string; service: string; source: string }[]> = {
-  whitefield: [{ promptId: 'p5', service: 'Montessori programme (Nursery–UKG)', source: 'Centre brochure shared by Priya Raman (Regional Ops), Sept 2026 — not yet in the approved record' }],
+  // Whitefield's Montessori programme is now independently verified in the seed (PRD v7); this hook stays for other centres.
+  koramangala: [{ promptId: 'p5', service: 'Montessori programme (Nursery–UKG)', source: 'Centre brochure shared by Arjun Mehta (Regional Ops), Sept 2026 — not yet in the approved record' }],
 }
 
 type Verdict = { verdict: 'yes' | 'no' | 'unknown'; basis: string; service?: string }
@@ -135,6 +136,7 @@ interface FindingSeed {
   needs?: { key: FactKey; contains?: string }[]
   needsSiteOwner?: boolean
   linkedAccuracyField?: FieldKey
+  coveredByAccuracy?: boolean
   recommend?: (f: Facts, loc: Location) => Omit<OptimizationRecommendation, 'id' | 'findingId' | 'gapConfidence'>
 }
 
@@ -177,6 +179,7 @@ const SEEDS: Record<string, FindingSeed[]> = {
       certainty: 'confirmed_gap',
       needs: [{ key: 'saturdayTours' }],
       linkedAccuracyField: 'saturdayTours',
+      coveredByAccuracy: true,
       observation: 'The page only says “Weekday campus visits only (9 AM–4 PM)”. It doesn’t answer whether parents can visit on a Saturday.',
       snapshot: 'Campus visits: weekday campus visits only (9 AM–4 PM).',
       recommend: (f, loc) => ({
@@ -440,6 +443,7 @@ export function readinessFindings(opp: Pick<DiscoveryOpportunity, 'id' | 'locati
       promptIds: s.promptIds,
       needsSiteOwner: s.needsSiteOwner,
       linkedAccuracyField: s.linkedAccuracyField,
+      coveredByAccuracy: s.coveredByAccuracy,
       blockedReason: blocked ? `Needs a confirmed business fact first: ${missing.map((m) => (m.contains ? `${m.contains[0].toUpperCase()}${m.contains.slice(1)} in the programme list` : m.key)).join(', ')}` : undefined,
       recommendedAction: draft?.title,
       draft,
@@ -538,6 +542,15 @@ export function updatesRecordedAt(rec: DiscoveryRecord | undefined, tasks: Task[
   if (!own.length || !own.every((t) => DONE_TASK.includes(t.status))) return null
   const times = own.flatMap((t) => t.activity.filter((a) => /Status → (Source updated|Request sent|Awaiting AI recheck)|Update recorded/.test(a.text)).map((a) => a.at))
   return times.sort().pop() ?? plan.updatedAt
+}
+
+/** When the first plan update was recorded on any source (partial publication still counts as “updates recorded”). */
+export function anyUpdateRecordedAt(rec: DiscoveryRecord | undefined, tasks: Task[]): string | null {
+  const plan = rec?.plan
+  if (!plan || plan.status !== 'approved') return null
+  const done = tasks.filter((t) => plan.taskIds.includes(t.id) && DONE_TASK.includes(t.status))
+  const times = done.flatMap((t) => t.activity.filter((a) => /Status → |Update recorded/.test(a.text)).map((a) => a.at))
+  return times.sort().pop() ?? null
 }
 
 export function deriveOpportunities(audit: Audit, observations: Observation[], ctx: DeriveContext): DiscoveryOpportunity[] {

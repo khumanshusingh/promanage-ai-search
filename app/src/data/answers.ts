@@ -93,7 +93,7 @@ const DISCOVERY_INTRO: Record<string, string> = {
   p2: 'Several preschools near {n} offer weekend visits. A few options to consider:',
   p3: 'If you need daycare or extended hours near {n}, these centers are often mentioned:',
   p4: 'Preschools near {n} that tend to receive positive parent feedback include:',
-  p5: 'For play-based or Montessori-style programs in {n}, you could look at:',
+  p5: 'Here are some well-regarded Montessori preschools in {n}, {c}:',
   p9: 'For toddlers around two years old near {n}, these playgroups are commonly suggested:',
 }
 

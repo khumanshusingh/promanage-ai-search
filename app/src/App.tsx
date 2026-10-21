@@ -28,6 +28,9 @@ import BrandAuditResults from '@/pages/brand/BrandAuditResults'
 import BrandInfoUpdates from '@/pages/brand/BrandInfoUpdates'
 import BrandReports from '@/pages/brand/BrandReports'
 import BrandDiscoveryPage from '@/pages/brand/BrandDiscovery'
+import DetectPage from '@/pages/brand/Detect'
+import ImprovePage from '@/pages/brand/Improve'
+import MeasurePage from '@/pages/brand/Measure'
 import DiscoveryInvestigationPage from '@/pages/DiscoveryInvestigation'
 import { Lock } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -118,7 +121,11 @@ export default function App() {
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={<Navigate to="/overview" replace />} />
+              <Route index element={<ByRole brand={<Navigate to="/detect" replace />} promanage={<Navigate to="/overview" replace />} />} />
+              {/* v7 Brand workspace: three cumulative chapters. Internal ProManage routes below stay intact. */}
+              <Route path="/detect" element={<DetectPage />} />
+              <Route path="/improve" element={<ImprovePage />} />
+              <Route path="/measure" element={<MeasurePage />} />
               <Route path="/overview" element={<ByRole brand={<BrandOverview />} promanage={<OverviewPage />} />} />
               <Route path="/audits" element={<AuditsPage />} />
               <Route path="/audits/new" element={<ByRole brand={<BrandRedirect to={() => '/overview?request=1'} />} promanage={<NewAuditPage />} />} />

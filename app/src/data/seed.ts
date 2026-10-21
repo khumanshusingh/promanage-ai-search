@@ -63,7 +63,11 @@ interface PilotSeed {
 }
 
 const PILOTS: PilotSeed[] = [
-  { id: 'whitefield', neighborhood: 'Whitefield', region: 'Bengaluru East', address: '14 Palm Grove Road, Whitefield, Bengaluru 560066', phoneSuffix: '1101', lastVerifiedAt: '2026-10-02T10:20:00+05:30' },
+  {
+    id: 'whitefield', neighborhood: 'Whitefield', region: 'Bengaluru East', address: '14 Palm Grove Road, Whitefield, Bengaluru 560066', phoneSuffix: '1101', lastVerifiedAt: '2026-10-02T10:20:00+05:30',
+    // Independently verified by regional operations (v7 fixture): the Montessori programme is an approved offering.
+    overrides: { programs: { value: 'Playgroup, Nursery, LKG, UKG, Daycare, Montessori programme (Nursery–UKG)', status: 'verified' } },
+  },
   { id: 'hsr-layout', neighborhood: 'HSR Layout', region: 'Bengaluru South', address: '221 27th Main, Sector 2, HSR Layout, Bengaluru 560102', phoneSuffix: '1102', lastVerifiedAt: '2026-09-28T16:05:00+05:30' },
   { id: 'koramangala', neighborhood: 'Koramangala', region: 'Bengaluru South', address: '9 Jasmine Lane, 5th Block, Koramangala, Bengaluru 560095', phoneSuffix: '1103', lastVerifiedAt: '2026-10-05T11:40:00+05:30' },
   { id: 'indiranagar', neighborhood: 'Indiranagar', region: 'Bengaluru East', address: '3 Cedar Court, 12th Main, Indiranagar, Bengaluru 560038', phoneSuffix: '1104', lastVerifiedAt: '2026-10-01T09:15:00+05:30' },
@@ -194,8 +198,8 @@ export const PROMPTS: PromptTemplate[] = [
   { id: 'p2', intent: 'unbranded_discovery', category: 'discovery', text: 'Best preschools offering Saturday tours near {neighborhood}, {city}', includeInDiscoveryMetric: true, defaultSelected: true },
   { id: 'p3', intent: 'unbranded_discovery', category: 'services', text: 'Preschools with daycare and extended hours in {neighborhood}', includeInDiscoveryMetric: true, defaultSelected: true },
   { id: 'p4', intent: 'unbranded_discovery', category: 'reputation', text: 'Preschools near {neighborhood} with good parent reviews', includeInDiscoveryMetric: true, defaultSelected: true },
-  { id: 'p5', intent: 'unbranded_discovery', category: 'services', text: 'Play-based Montessori preschool options in {neighborhood}, {city}', includeInDiscoveryMetric: true, defaultSelected: true },
-  { id: 'p6', intent: 'branded_fact', category: 'branded', text: 'Does BrightNest {neighborhood} offer Saturday visits?', includeInDiscoveryMetric: false, defaultSelected: true },
+  { id: 'p5', intent: 'unbranded_discovery', category: 'services', text: 'Best Montessori preschools in {neighborhood}, {city}', includeInDiscoveryMetric: true, defaultSelected: true },
+  { id: 'p6', intent: 'branded_fact', category: 'branded', text: 'Does BrightNest {neighborhood} offer Saturday campus tours?', includeInDiscoveryMetric: false, defaultSelected: true },
   { id: 'p7', intent: 'branded_fact', category: 'branded', text: 'BrightNest {neighborhood} phone number and opening hours', includeInDiscoveryMetric: false, defaultSelected: true },
   { id: 'p8', intent: 'branded_fact', category: 'branded', text: 'Where is BrightNest Preschool {neighborhood} located?', includeInDiscoveryMetric: false, defaultSelected: true },
   { id: 'p9', intent: 'unbranded_discovery', category: 'discovery', text: 'Preschools for 2-year-olds near {neighborhood}', includeInDiscoveryMetric: true },

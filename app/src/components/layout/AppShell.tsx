@@ -2,10 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { BarChart3, Building2, Check, ChevronDown, ClipboardCheck, FileText, Inbox, LayoutDashboard, LineChart, ListChecks, Menu, MapPin, MessagesSquare, PhoneCall, RadioTower, ScanSearch, SlidersHorizontal, Sparkles, Star, UserRound, X } from 'lucide-react'
-import { STAGE, useBrandViews } from '@/lib/brandStatus'
-import { brandNeedsAction, useDiscovery } from '@/lib/useDiscovery'
+import { useBrandViews } from '@/lib/brandStatus'
+import { useDiscovery } from '@/lib/useDiscovery'
 import { toast } from 'sonner'
-import type { Release, Role } from '@/data/types'
+import type { DemoChapter, Release } from '@/data/types'
 import { ORG, PEOPLE, ROLE_PERSON } from '@/data/seed'
 import { useStore } from '@/store/AppStore'
 import { cn } from '@/lib/utils'
@@ -32,11 +32,6 @@ const PROMANAGE_NAV: NavItem[] = [
   { to: '/tasks', label: 'Tasks & Publishing', icon: <ClipboardCheck />, release: 'V1' },
   { to: '/monitoring', label: 'Monitoring', icon: <RadioTower />, release: 'V2' },
   { to: '/reports', label: 'Reports', icon: <FileText /> },
-]
-
-const ROLES: { id: Role; label: string }[] = [
-  { id: 'brand', label: 'Brand · BrightNest marketing' },
-  { id: 'promanage', label: 'ProManage · customer success & GEO operations' },
 ]
 
 function Wordmark() {
@@ -97,7 +92,6 @@ function ProductSwitcher() {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { hasRelease, issues, inScope, tasks, role, investigations, plans, checkRequests } = useStore()
-  const { views } = useBrandViews()
   const disc = useDiscovery()
   const brand = role === 'brand'
   const NAV = brand ? BRAND_NAV : PROMANAGE_NAV
@@ -105,7 +99,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const openTasks = tasks.filter((t) => t.status !== 'closed').length
   const pmQueue = Object.values(investigations).filter((i) => i.status === 'in_progress').length + Object.values(plans).filter((p) => p.status === 'changes_requested').length + checkRequests.filter((r) => r.status === 'requested').length
   const counts: Record<string, number | undefined> = brand
-    ? { '/attention': views.filter((v) => STAGE[v.stage].needsBrand).length + disc.latest.filter((o) => brandNeedsAction(o, !!disc.record(o.id)?.confirmRequested)).length || undefined }
+    ? { '/attention': Object.values(plans).filter((p) => p.status === 'awaiting_brand_approval').length + disc.latest.filter((o) => disc.record(o.id)?.plan?.status === 'awaiting_brand_approval').length || undefined }
     : { '/issues': openIssues || undefined, '/tasks': openTasks || undefined, '/overview': pmQueue || undefined }
 
   return (
@@ -127,6 +121,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           {!brand && <span className="ml-auto text-[10.5px] font-medium normal-case tracking-normal">Ops</span>}
         </p>
       </div>
+      {brand ? (
+        <ChapterNav onNavigate={onNavigate} awaiting={counts['/attention']} />
+      ) : (
       <nav className="flex-1 space-y-0.5 px-3" aria-label="AI Search">
         {NAV.map((item) => {
           const locked = item.release && !hasRelease(item.release)
@@ -159,7 +156,49 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           )
         })}
       </nav>
+      )}
     </div>
+  )
+}
+
+const CHAPTERS: { to: string; n: DemoChapter; label: string; tag: Release; icon: ReactNode; blurb: string }[] = [
+  { to: '/detect', n: 1, label: 'Detect', tag: 'MVP', icon: <ScanSearch />, blurb: 'What AI says about your centres' },
+  { to: '/improve', n: 2, label: 'Improve', tag: 'V1', icon: <Sparkles />, blurb: 'Review & authorize changes' },
+  { to: '/measure', n: 3, label: 'Measure', tag: 'V2', icon: <ListChecks />, blurb: 'What AI said afterward' },
+]
+
+/** Three always-clickable chapters; the first click on a chapter unlocks it cumulatively (never approves anything). */
+function ChapterNav({ onNavigate, awaiting }: { onNavigate?: () => void; awaiting?: number }) {
+  const { hasRelease } = useStore()
+  return (
+    <nav className="flex-1 space-y-1 px-3" aria-label="AI Search chapters">
+      {CHAPTERS.map((c) => {
+        const unlocked = hasRelease(c.tag)
+        return (
+          <NavLink
+            key={c.to}
+            to={c.to}
+            onClick={onNavigate}
+            className={({ isActive }) => cn('group relative flex items-start gap-2.5 rounded-lg px-3 py-2 transition-colors duration-150 [&_svg]:mt-0.5 [&_svg]:size-[17px]', isActive ? 'bg-brand-soft text-brand' : 'text-body hover:bg-[#f1f4f9] hover:text-ink')}
+          >
+            {({ isActive }) => (
+              <>
+                {isActive && <span className="absolute -left-3 top-2 h-7 w-[3px] rounded-r-full bg-brand" />}
+                {c.icon}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 text-[13.5px] font-semibold">
+                    <span className="tabular text-muted">0{c.n} ·</span> {c.label}
+                    <span className={cn('rounded px-1 py-px text-[10px] font-semibold', unlocked ? 'bg-teal-soft text-teal-ink' : 'bg-subtle text-muted ring-1 ring-line')}>{c.tag}</span>
+                  </span>
+                  <span className="block text-[11.5px] font-normal text-muted">{unlocked ? c.blurb : 'Click to unlock'}</span>
+                </span>
+                {c.n === 2 && unlocked && awaiting ? <span className="tabular mt-0.5 rounded-full bg-[#eef2f7] px-1.5 text-[11.5px] font-semibold text-body">{awaiting}</span> : null}
+              </>
+            )}
+          </NavLink>
+        )
+      })}
+    </nav>
   )
 }
 
@@ -177,7 +216,7 @@ function MenuItem({ children, onSelect, checked, disabled }: { children: ReactNo
 }
 
 function TopBar({ onMenu }: { onMenu: () => void }) {
-  const { role, setRole } = useStore()
+  const { role } = useStore()
   const navigate = useNavigate()
   const person = PEOPLE.find((p) => p.id === ROLE_PERSON[role])!
   const initials = person.name.split(' ').map((s) => s[0]).join('')
@@ -244,27 +283,47 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
                 </p>
               </div>
             </div>
-            <DM.Label className="flex items-center justify-between px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
-              View as
-              <span className="rounded bg-subtle px-1.5 py-0.5 text-[10.5px] normal-case tracking-normal text-body ring-1 ring-line">Demo role</span>
-            </DM.Label>
-            {ROLES.map((r) => (
-              <MenuItem
-                key={r.id}
-                checked={role === r.id}
-                onSelect={() => {
-                  setRole(r.id)
-                  toast(`Viewing as ${r.id === 'brand' ? 'Brand' : 'ProManage'}`, { description: r.id === 'brand' ? 'Business decisions, approvals and progress.' : 'Investigation, GEO preparation, tasks and monitoring.' })
-                }}
-              >
-                <span className="block text-ink">{PEOPLE.find((p) => p.id === ROLE_PERSON[r.id])?.name}</span>
-                <span className="block text-[11.5px] text-muted">{r.label}</span>
-              </MenuItem>
-            ))}
+            <MenuItem onSelect={() => window.dispatchEvent(new Event('presenter:toggle'))}>
+              <span className="block text-ink">Demo settings</span>
+              <span className="block text-[11.5px] text-muted">Reset demo · internal workspace</span>
+            </MenuItem>
           </DM.Content>
         </DM.Portal>
       </DM.Root>
     </header>
+  )
+}
+
+/** Brand scope, simulated label and independent Discovery / Accuracy / approval counts, with a path back to the standard check. */
+function BrandStatusBar() {
+  const { role, latestAudit, hasRelease, plans, issues, selectedGoalId, goals, selectGoal } = useStore()
+  const { views } = useBrandViews()
+  const disc = useDiscovery()
+  if (role !== 'brand' || !latestAudit) return null
+  // Opportunities = eligible questions where the centre wasn't mentioned (awaiting-confirmation ones aren't counted).
+  const opps = disc.latest.reduce((n, o) => n + o.targetPromptIds.filter((p) => disc.eligibility(o.locationId, p).status === 'eligible').length, 0)
+  const acc = views.filter((v) => v.issue.auditId === latestAudit.id && v.stage !== 'not_an_issue').length
+  const awaiting = issues.filter((i) => i.auditId === latestAudit.id && plans[i.id]?.status === 'awaiting_brand_approval').length + disc.latest.filter((o) => disc.record(o.id)?.plan?.status === 'awaiting_brand_approval').length
+  const goal = goals.find((g) => g.id === selectedGoalId)
+  return (
+    <div className="no-print flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line bg-surface/70 px-4 py-2 text-[12.5px] text-body sm:px-6 lg:px-8">
+      <span className="font-medium text-ink">{goal ? `Focused: “${goal.anchorQuestion}”` : 'All locations · All findings · Latest standard check'}</span>
+      {goal && (
+        <button className="font-medium text-brand hover:underline" onClick={() => selectGoal(null)}>
+          Back to standard check
+        </button>
+      )}
+      <span className="rounded-full bg-teal-soft px-2 py-0.5 font-medium text-teal-ink">{opps} discovery opportunities</span>
+      <span className="rounded-full bg-brand-soft px-2 py-0.5 font-medium text-brand">{acc} accuracy findings</span>
+      {hasRelease('V1') && <span className="rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning">{awaiting} need your approval</span>}
+      <span className="ml-auto flex flex-wrap items-center gap-3">
+        <NavLink className="hover:text-ink hover:underline" to="/detect#locations">Choose locations</NavLink>
+        <NavLink className="hover:text-ink hover:underline" to={`/audits/${latestAudit.id}`}>View evidence</NavLink>
+        <NavLink className="hover:text-ink hover:underline" to="/reports">Download report</NavLink>
+        {hasRelease('V1') && <NavLink className="hover:text-ink hover:underline" to="/improve#history">Approval history</NavLink>}
+        <span className="rounded bg-subtle px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-line">Simulated prototype</span>
+      </span>
+    </div>
   )
 }
 
@@ -293,6 +352,7 @@ export function AppShell() {
       )}
       <div className="lg:pl-[232px] print:pl-0">
         <TopBar onMenu={() => setMobileOpen(true)} />
+        <BrandStatusBar />
         <PresenterPanel />
         <main className="print-full mx-auto max-w-[1440px] px-4 pb-16 pt-6 sm:px-6 lg:px-8 lg:pt-8">
           <Outlet />

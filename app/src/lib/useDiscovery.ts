@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import type { DiscoveryOpportunity, DiscoveryRecheck, DiscoveryStatus, Observation, Task } from '@/data/types'
 import { useStore } from '@/store/AppStore'
-import { compareDiscovery, deriveOpportunities, discoveryMetrics, eligibilityFor, isUnbranded, readinessFindings, updatesRecordedAt, type FindingWithDraft } from './discovery'
+import { compareDiscovery, deriveOpportunities, discoveryMetrics, eligibilityFor, isUnbranded, readinessFindings, anyUpdateRecordedAt, type FindingWithDraft } from './discovery'
 
 /** Shared discovery selectors. Both roles read the same derived records. */
 export function useDiscovery() {
@@ -23,7 +23,7 @@ export function useDiscovery() {
       const waves = rechecksFor(opp.auditId)
       const last = waves[waves.length - 1]
       if (!last) return null
-      return compareDiscovery(opp, observationsFor(opp.auditId, 0), observationsFor(opp.auditId, last.wave), last, eligibleSet(opp), updatesRecordedAt(discovery[opp.id], tasks))
+      return compareDiscovery(opp, observationsFor(opp.auditId, 0), observationsFor(opp.auditId, last.wave), last, eligibleSet(opp), anyUpdateRecordedAt(discovery[opp.id], tasks))
     },
     [hasRelease, rechecksFor, observationsFor, eligibleSet, discovery, tasks],
   )
@@ -50,7 +50,7 @@ export function useDiscovery() {
   const tasksFor = useCallback((opp: DiscoveryOpportunity): Task[] => tasks.filter((t) => t.opportunityId === opp.id), [tasks])
 
   const observationsOf = useCallback(
-    (opp: DiscoveryOpportunity, wave = 0): Observation[] => observationsFor(opp.auditId, wave).filter((o) => o.locationId === opp.locationId && isUnbranded(o, promptsById)),
+    (opp: Pick<DiscoveryOpportunity, 'auditId' | 'locationId'>, wave = 0): Observation[] => observationsFor(opp.auditId, wave).filter((o) => o.locationId === opp.locationId && isUnbranded(o, promptsById)),
     [observationsFor, promptsById],
   )
 

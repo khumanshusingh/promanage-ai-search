@@ -2,10 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ClipboardList, Search, Send } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Issue, PlanItem, SourceRecord } from '@/data/types'
-import { channelTarget, LOCATION_BY_ID } from '@/data/seed'
-import { effectiveLocation } from '@/lib/facts'
-import { FIELD_PHRASE } from '@/lib/brandStatus'
+import type { Issue } from '@/data/types'
 import { useStore } from '@/store/AppStore'
 import { fmtDateTime } from '@/lib/utils'
 import { Badge } from './ui/badge'
@@ -16,33 +13,8 @@ import { Checkbox } from './ui/checkbox'
 import { FieldError, Label, Textarea } from './ui/input'
 import { PermButton, TaskStatusBadge } from './domain'
 
-/** Draft a plain-language plan from the source comparison. Owners and limits are explicit. */
-export function suggestPlan(issue: Issue, sources: SourceRecord[], factEdits: Parameters<typeof effectiveLocation>[1]) {
-  const loc = LOCATION_BY_ID[issue.locationId]
-  const verified = issue.field ? effectiveLocation(issue.locationId, factEdits).verifiedFields[issue.field].value : null
-  const phrase = issue.field ? (FIELD_PHRASE[issue.field] ?? issue.field) : 'information'
-  const bad = (ch: SourceRecord['channel']) => sources.find((s) => s.channel === ch && issue.field && !s.inaccessible && s.values[issue.field] != null && s.values[issue.field] !== verified)
-  const items: PlanItem[] = []
-  const where: string[] = []
-  if (bad('owned_website')) {
-    where.push('your official website')
-    items.push({ id: 'web', kind: 'owned_website', title: 'Update the official centre page', owner: 'BrightNest website team', detail: channelTarget('owned_website', issue.locationId) })
-    items.push({ id: 'struct', kind: 'structured_info', title: 'Prepare search-readable store information', owner: 'ProManage', detail: 'Verified fact sheet and structured data for the centre page' })
-  }
-  if (bad('managed_listing')) {
-    where.push('your Google Business Profile')
-    items.push({ id: 'listing', kind: 'managed_listing', title: 'Update your Google Business Profile', owner: 'ProManage Listing Management', detail: channelTarget('managed_listing', issue.locationId) })
-  }
-  const dir = bad('external_directory')
-  if (dir) {
-    where.push(`an independent directory (${dir.label})`)
-    items.push({ id: 'dir', kind: 'external_request', title: `Request a correction from ${dir.label}`, owner: 'ProManage', detail: channelTarget('external_request', issue.locationId) })
-  }
-  const why = where.length
-    ? `An AI answer gave the wrong ${phrase} for ${loc.name}. We found inconsistent ${phrase} on ${where.join(' and ')}.`
-    : `An AI answer gave the wrong ${phrase} for ${loc.name}. The sources we checked match your information.`
-  return { items, why }
-}
+export { suggestPlan } from '@/lib/plans'
+import { suggestPlan } from '@/lib/plans'
 
 export function PlanDialog({ issue, open, onOpenChange }: { issue: Issue; open: boolean; onOpenChange: (o: boolean) => void }) {
   const { sourcesFor, factEdits, plans, savePlan } = useStore()

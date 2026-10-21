@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { ActivityEntry, AssetApproval, AssetKind, Audit, AuditMode, CheckRequest, ControlledChannel, CorrectionPlan, CsvImportSummary, DiscoveryRecord, Disposition, EligibilityReview, Investigation, NotRelevantReason, OptimizationRecommendation, PlanItem, FactEdit, FieldKey, Issue, IssueDisposition, Observation, PromptTemplate, Recheck, Release, Review, ReviewEvidence, ReviewStatus, Role, SourceRecord, SourceUpdate, SurfaceId, Task, TaskStatus } from '@/data/types'
-import { CHANNEL_LABELS, LOCATION_BY_ID, PEOPLE, PROMPTS, ROLE_PERSON, SURFACE, sourceRecordsFor } from '@/data/seed'
+import type { DemoChapter, PrioritySearchGoal, ProposalApproval, PublicationAttempt, ActivityEntry, AssetApproval, AssetKind, Audit, AuditMode, CheckRequest, ControlledChannel, CorrectionPlan, CsvImportSummary, DiscoveryRecord, Disposition, EligibilityReview, Investigation, NotRelevantReason, OptimizationRecommendation, PlanItem, FactEdit, FieldKey, Issue, IssueDisposition, Observation, PromptTemplate, Recheck, Release, Review, ReviewEvidence, ReviewStatus, Role, SourceRecord, SourceUpdate, SurfaceId, Task, TaskStatus } from '@/data/types'
+import { CHANNEL_LABELS, fillPrompt, LOCATION_BY_ID, ORG, PEOPLE, PROMPTS, ROLE_PERSON, SURFACE, sourceRecordsFor } from '@/data/seed'
 import { buildObservation } from '@/data/answers'
 import { deriveIssues } from '@/data/issues'
 import { buildFacts, effectiveLocation, FACT_LABELS, factId } from '@/lib/facts'
-import { eligibilityKey } from '@/lib/discovery'
+import { deriveOpportunities, eligibilityKey, readinessFindings } from '@/lib/discovery'
+import { suggestPlan } from '@/lib/plans'
+import { simulateAttempt } from '@/lib/publishing'
 import { buildFactSheet, buildJsonLd } from '@/lib/geoMarkup'
 
 const STORAGE_KEY = 'promanage-ai-visibility-demo'
@@ -36,11 +38,46 @@ interface PersistedState {
   showSimLabels: boolean
   discoveryEligibility: Record<string, EligibilityReview>
   discovery: Record<string, DiscoveryRecord>
+  /** v7: audits whose findings ProManage has already prepared improvements for (simulated backend). */
+  autoPrepared: Record<string, string>
+  approvals: ProposalApproval[]
+  publications: PublicationAttempt[]
+  goals: PrioritySearchGoal[]
+  selectedGoalId: string | null
+  detectLocationIds: string[] | null
   dispositions: Record<string, IssueDisposition>
   sourceUpdates: Record<string, SourceUpdate>
   investigations: Record<string, Investigation>
   plans: Record<string, CorrectionPlan>
   checkRequests: CheckRequest[]
+}
+
+const norm = (q: string) => q.toLowerCase().replace(/[?.!,]/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** Seeded optional goal (PRD v7 §8). Not selected by default — the standard check stays the default view. */
+const SEEDED_GOAL: PrioritySearchGoal = {
+  id: 'goal-whitefield-montessori',
+  organizationId: 'org-brightnest',
+  locationIds: ['whitefield'],
+  anchorQuestion: 'Best Montessori preschools in Whitefield, Bengaluru?',
+  normalizedAnchor: norm('Best Montessori preschools in Whitefield, Bengaluru?'),
+  label: 'Whitefield Priority Question',
+  goalVersion: 1,
+  importance: 'high',
+  status: 'active',
+  promptId: 'p5',
+  history: [{ version: 1, anchorQuestion: 'Best Montessori preschools in Whitefield, Bengaluru?', locationIds: ['whitefield'], at: '2026-10-20T09:00:00+05:30' }],
+  createdBy: 'promanage',
+  createdAt: '2026-10-20T09:00:00+05:30',
+  updatedAt: '2026-10-20T09:00:00+05:30',
+  simulated: true,
+}
+
+/** Exact seeded prompt this question matches for the location (so existing evidence can be linked), if any. */
+export function matchPrompt(question: string, locationId: string, prompts: PromptTemplate[]) {
+  const loc = LOCATION_BY_ID[locationId]
+  if (!loc) return undefined
+  return prompts.find((p) => norm(fillPrompt(p.text, loc)) === norm(question))?.id
 }
 
 const initialState = (): PersistedState => ({
@@ -62,6 +99,12 @@ const initialState = (): PersistedState => ({
   showSimLabels: false,
   discoveryEligibility: {},
   discovery: {},
+  autoPrepared: {},
+  approvals: [],
+  publications: [],
+  goals: [SEEDED_GOAL],
+  selectedGoalId: null,
+  detectLocationIds: null,
   dispositions: {},
   sourceUpdates: {},
   investigations: {},
@@ -157,6 +200,16 @@ interface Store extends PersistedState {
   completeInvestigation: (issueId: string, status: 'completed' | 'inconclusive', finding: string) => void
   savePlan: (issueId: string, plan: { why: string; items: PlanItem[] }, send: boolean) => void
   approvePlan: (issueId: string, note?: string) => void
+  openChapter: (c: DemoChapter) => void
+  setDetectLocations: (ids: string[]) => void
+  prepareImprovements: (auditId: string) => void
+  authorizeProposal: (proposalKey: string, targetIds: string[], comment?: string) => void
+  rejectProposal: (proposalKey: string, action: 'request_changes' | 'decline', comment: string) => void
+  reviseProposal: (proposalKey: string) => void
+  retryPublication: (taskId: string) => void
+  saveGoal: (input: { question: string; locationId: string; label?: string; importance?: 'standard' | 'high' }) => PrioritySearchGoal
+  updateGoal: (id: string, patch: { status?: PrioritySearchGoal['status']; question?: string }) => void
+  selectGoal: (id: string | null) => void
   requestPlanChanges: (issueId: string, comment: string) => void
   declinePlan: (issueId: string, reason: string) => void
   requestCheck: (note?: string) => CheckRequest
@@ -241,6 +294,8 @@ export function parseOpp(oppId: string) {
 }
 const oppLocName = (oppId: string) => LOCATION_BY_ID[parseOpp(oppId).locationId]?.name ?? oppId
 const discRecord = (s: PersistedState, oppId: string): DiscoveryRecord => s.discovery[oppId] ?? { history: [] }
+/** `disc:<opportunityId>` / `acc:<issueId>` → ['disc' | 'acc', id] */
+const splitKey = (key: string) => [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)] as const
 
 const Ctx = createContext<Store | null>(null)
 
@@ -307,6 +362,48 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const log = (s: PersistedState, text: string, kind: ActivityEntry['kind'] = 'system'): ActivityEntry[] =>
     [{ id: uid('act'), at: now(), actor: actorName(s.role), kind, text }, ...s.activity].slice(0, 60)
 
+  /** One simulated, permission-checked write for one target. Idempotent; never touches recorded AI answers. */
+  const attempt = (s: PersistedState, taskId: string, key: string, version: string): PersistedState => {
+    const t = s.tasks.find((x) => x.id === taskId)
+    if (!t) return s
+    const prior = s.publications.filter((a) => a.taskId === taskId)
+    if (prior.some((a) => a.state === 'success' || a.state === 'manual_handoff')) return s
+    const sim = simulateAttempt(t, prior.length + 1)
+    let sourceUpdates = s.sourceUpdates
+    let before: string | undefined
+    let after: string | undefined
+    if (t.opportunityId) {
+      const rec = s.discovery[t.opportunityId]?.plan?.recommendations.find((r) => r.id === t.recommendationId)
+      before = rec?.currentText
+      after = rec?.proposedText
+    } else if (t.field) {
+      const srcId = `${t.locationId}-${t.channel === 'owned_website' ? 'web' : t.channel === 'managed_listing' ? 'listing' : 'dir'}`
+      before = sourceRecordsFor(t.locationId, s.sourceUpdates).find((r) => r.id === srcId)?.values[t.field] ?? undefined
+      after = effectiveLocation(t.locationId, s.factEdits).verifiedFields[t.field].value ?? undefined
+      if (sim.state === 'success' && (t.channel === 'owned_website' || t.channel === 'managed_listing') && after) {
+        sourceUpdates = { ...sourceUpdates, [`${srcId}:${t.field}`]: { value: after, previous: before ?? null, at: now(), taskId } }
+      }
+    }
+    const status: TaskStatus = sim.state === 'success' ? 'awaiting_recheck' : sim.state === 'manual_handoff' ? 'source_updated' : t.status
+    const rec: PublicationAttempt = { id: uid('pub'), taskId, proposalKey: key, approvedVersion: version, permission: sim.permission, permissionChecked: true, state: sim.state, before, after, detail: sim.detail, simulated: true, recordedAt: now() }
+    const text = sim.state === 'success' ? `Update recorded (simulated): ${sim.detail} Recorded AI answers are unchanged.` : sim.state === 'manual_handoff' ? sim.detail : `Not published: ${sim.detail}`
+    return {
+      ...s,
+      sourceUpdates,
+      publications: [...s.publications, rec],
+      tasks: s.tasks.map((x) =>
+        x.id === taskId
+          ? {
+              ...x,
+              status,
+              evidence: sim.state === 'success' ? [...x.evidence, { label: 'Publication evidence', value: sim.detail }] : x.evidence,
+              activity: [...x.activity, { id: uid('a'), at: now(), actor: 'ProManage (automated)', kind: 'system', text }, ...(status !== x.status ? [{ id: uid('a'), at: now(), actor: 'System', kind: 'status' as const, text: `Status → ${taskStatusLabel(status, x.channel)}` }] : [])],
+            }
+          : x,
+      ),
+    }
+  }
+
   const store: Store = {
     ...state,
     prompts,
@@ -327,6 +424,191 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     rechecksFor: (auditId) => state.rechecks.filter((r) => r.priorAuditId === auditId).sort((a, b) => a.wave - b.wave),
 
     setRelease: (release) => setState((s) => ({ ...s, release })),
+
+    // Click-to-unlock (PRD v7 §5): opening a chapter only reveals capability. It never approves or publishes anything.
+    openChapter: (c) =>
+      setState((s) => {
+        const next = (['MVP', 'V1', 'V2'] as Release[])[c - 1]
+        return RELEASE_RANK[next] > RELEASE_RANK[s.release] ? { ...s, release: next } : s
+      }),
+
+    setDetectLocations: (ids) => setState((s) => ({ ...s, detectLocationIds: ids })),
+
+    // Simulated ProManage backend: investigate the standard check's findings and prepare evidence-backed proposals.
+    prepareImprovements: (auditId) =>
+      setState((s) => {
+        const audit = s.audits.find((a) => a.id === auditId)
+        if (!audit || s.autoPrepared[auditId]) return s
+        const at = now()
+        const system = 'ProManage (automated)'
+        const discovery = { ...s.discovery }
+        const investigations = { ...s.investigations }
+        const plans = { ...s.plans }
+        let prepared = 0
+        const opps = deriveOpportunities(audit, observationsFor(auditId, 0), { prompts: promptsById, eligibility: s.discoveryEligibility, factEdits: s.factEdits, records: s.discovery, tasks: s.tasks, release: 'V1' })
+        for (const opp of opps) {
+          const r = discovery[opp.id] ?? { history: [] }
+          if (opp.eligibility !== 'eligible' || r.plan || r.monitorOnly || r.decision?.kind === 'dismissed' || r.archived) continue
+          const findings = readinessFindings(opp, s.factEdits, at)
+          // Changes the accuracy correction already makes aren't proposed twice; only confirmed, controllable gaps (plus request-only and site-admin checks) are proposed.
+          const usable = findings.filter((f) => f.draft && !f.blockedReason && !f.coveredByAccuracy && (f.certainty === 'confirmed_gap' || f.category === 'offsite' || f.category === 'freshness'))
+          const confirmed = usable.filter((f) => f.certainty === 'confirmed_gap')
+          const base = { ...r, decision: r.decision ?? { kind: 'worth_investigating' as const, by: 'promanage' as Role, byName: system, at } }
+          if (!confirmed.length) {
+            discovery[opp.id] = { ...base, investigation: { status: 'completed', requestedBy: 'promanage', requestedAt: at, checkedAt: at, completedAt: at, result: 'no_gap', findingReviews: {}, note: 'Sources inspected look complete' }, monitorOnly: { by: system, at, note: 'No confirmed, controllable gap found' }, history: [...r.history, { at, by: system, text: 'Checked managed sources — no supported change recommended yet' }] }
+            continue
+          }
+          const loc = LOCATION_BY_ID[opp.locationId]
+          discovery[opp.id] = {
+            ...base,
+            investigation: { status: 'completed', requestedBy: 'promanage', requestedAt: at, checkedAt: at, completedAt: at, result: 'gaps_found', findingReviews: Object.fromEntries(usable.map((f) => [f.id, 'confirmed' as const])) },
+            plan: {
+              id: `plan-${opp.id}-r1`,
+              opportunityId: opp.id,
+              round: 1,
+              createdBy: system,
+              status: 'awaiting_brand_approval',
+              summary: `${loc.name} wasn’t mentioned in ${opp.targetPromptIds.length} relevant sampled search${opp.targetPromptIds.length === 1 ? '' : 'es'} (${opp.intentCategory}). ProManage checked the information it manages for this centre and found specific gaps you can approve fixing. These make accurate information easier to find; they can’t guarantee any AI answer changes.`,
+              recommendations: usable.map((f) => f.draft!),
+              taskIds: [],
+              comments: [{ at, by: 'promanage', kind: 'sent', text: 'Prepared by ProManage (simulated) and sent for Brand authorization' }],
+              updatedAt: at,
+            },
+            history: [...r.history, { at, by: system, text: `Investigated managed sources and prepared ${usable.length} recommendations (simulated)` }],
+          }
+          prepared++
+        }
+        for (const issue of issues.filter((i) => i.auditId === auditId && i.category === 'factual_mismatch' && !i.entityConfusion)) {
+          if (plans[issue.id] || s.reviews[issue.reviewKey]?.status === 'not_issue') continue
+          const verified = issue.field ? effectiveLocation(issue.locationId, s.factEdits).verifiedFields[issue.field] : null
+          if (!verified || verified.status !== 'verified') continue
+          const draft = suggestPlan(issue, sourceRecordsFor(issue.locationId, s.sourceUpdates), s.factEdits)
+          const round = investigations[issue.id]?.round ?? 1
+          investigations[issue.id] = { status: 'completed', round, finding: draft.items.length ? 'Controllable source differences found' : 'Sources we can inspect match your information', requestedBy: 'promanage', requestedAt: at, updatedAt: at, history: [...(investigations[issue.id]?.history ?? []), { at, by: 'promanage', text: 'Source comparison prepared automatically (simulated)' }] }
+          if (draft.items.length) {
+            plans[issue.id] = { issueId: issue.id, round, status: 'awaiting_brand_approval', why: draft.why, items: draft.items, taskIds: [], comments: [{ at, by: 'promanage', kind: 'sent', text: 'Prepared by ProManage (simulated)' }], updatedAt: at }
+            prepared++
+          }
+        }
+        return { ...s, discovery, investigations, plans, autoPrepared: { ...s.autoPrepared, [auditId]: at }, activity: log(s, `ProManage prepared ${prepared} improvement proposals (simulated)`) }
+      }),
+
+    authorizeProposal: (key, targetIds, comment) => {
+      const [kind, id] = splitKey(key)
+      // 1. Freeze the approval: version, scope (selected targets) and verified facts it relies on.
+      setState((s) => {
+        const actor = actorName(s.role)
+        if (kind === 'disc') {
+          const r = s.discovery[id]
+          const plan = r?.plan
+          if (!plan || plan.status !== 'awaiting_brand_approval') return s
+          const chosen = plan.recommendations.filter((x) => targetIds.includes(x.id))
+          if (!chosen.length) return s
+          const approval: ProposalApproval = { id: uid('appr'), proposalKey: key, approvedVersion: `r${plan.round}`, approvedTargetIds: chosen.map((c) => c.id), approverRole: 'brand', approverName: actor, verifiedFactVersionIds: [...new Set(chosen.flatMap((c) => c.businessFactIds))].map((f) => `${f}@${s.factEdits[f]?.at ?? 'seed'}`), action: 'approve', comment, at: now() }
+          const left = plan.recommendations.filter((x) => !targetIds.includes(x.id))
+          return { ...s, approvals: [...s.approvals, approval], discovery: { ...s.discovery, [id]: { ...r, plan: { ...plan, recommendations: chosen }, history: [...r.history, { at: now(), by: actor, text: `Authorized ${chosen.length} change${chosen.length === 1 ? '' : 's'} (version r${plan.round})${left.length ? `; not authorized: ${left.map((l) => l.brandTitle).join(', ')}` : ''}` }] } } }
+        }
+        const plan = s.plans[id]
+        const issue = issues.find((i) => i.id === id)
+        if (!plan || !issue || plan.status !== 'awaiting_brand_approval') return s
+        const chosen = plan.items.filter((x) => targetIds.includes(x.id))
+        if (!chosen.length) return s
+        const approval: ProposalApproval = { id: uid('appr'), proposalKey: key, approvedVersion: `r${plan.round}`, approvedTargetIds: chosen.map((c) => c.id), approverRole: 'brand', approverName: actor, verifiedFactVersionIds: issue.field ? [`${issue.locationId}:${issue.field}@${s.factEdits[`${issue.locationId}:${issue.field}`]?.at ?? 'seed'}`] : [], action: 'approve', comment, at: now() }
+        const prev = s.reviews[issue.reviewKey]
+        // Authorizing a correction confirms the AI statement was wrong (verified record is the reference).
+        const reviews = prev?.status === 'confirmed' ? s.reviews : { ...s.reviews, [issue.reviewKey]: { status: 'confirmed' as const, by: s.role, at: now(), note: 'Confirmed when authorizing the correction', evidence: prev?.evidence, history: [...(prev?.history ?? []), { status: 'confirmed' as const, by: s.role, at: now() }] } }
+        return { ...s, reviews, approvals: [...s.approvals, approval], plans: { ...s.plans, [id]: { ...plan, items: chosen } } }
+      })
+      // 2. Existing approval engine creates the tasks (reused, not duplicated).
+      if (kind === 'disc') store.approveDiscoveryPlan(id, comment)
+      else store.approvePlan(id, comment)
+      // 3. Simulated automatic execution, per target, only within the approved scope.
+      setState((s) => {
+        const plan = kind === 'disc' ? s.discovery[id]?.plan : s.plans[id]
+        if (!plan || plan.status !== 'approved') return s
+        let next = s
+        for (const taskId of plan.taskIds) next = attempt(next, taskId, key, `r${plan.round}`)
+        return { ...next, activity: log(next, `Applied approved changes to connected sources (simulated) · ${key}`, 'status') }
+      })
+    },
+
+    rejectProposal: (key, action, comment) => {
+      const [kind, id] = splitKey(key)
+      setState((s) => {
+        const plan = kind === 'disc' ? s.discovery[id]?.plan : s.plans[id]
+        if (!plan) return s
+        return { ...s, approvals: [...s.approvals, { id: uid('appr'), proposalKey: key, approvedVersion: `r${plan.round}`, approvedTargetIds: [], approverRole: 'brand', approverName: actorName(s.role), verifiedFactVersionIds: [], action, comment, at: now() }] }
+      })
+      if (kind === 'disc') (action === 'decline' ? store.declineDiscoveryPlan : store.requestDiscoveryPlanChanges)(id, comment)
+      else (action === 'decline' ? store.declinePlan : store.requestPlanChanges)(id, comment)
+    },
+
+    // Simulated ProManage turnaround on a change request: a new version that needs fresh authorization.
+    reviseProposal: (key) =>
+      setState((s) => {
+        const [kind, id] = splitKey(key)
+        const at = now()
+        if (kind === 'disc') {
+          const r = s.discovery[id]
+          const plan = r?.plan
+          if (!plan || plan.status !== 'changes_requested') return s
+          const ask = plan.comments.filter((c) => c.kind === 'changes').pop()?.text ?? ''
+          return { ...s, discovery: { ...s.discovery, [id]: { ...r, previousPlans: [...(r.previousPlans ?? []), plan], plan: { ...plan, id: `plan-${id}-r${plan.round + 1}`, round: plan.round + 1, status: 'awaiting_brand_approval', summary: `${plan.summary}\n\nRevised after your comment: “${ask}”. Only verified facts are used.`, comments: [...plan.comments, { at, by: 'promanage', kind: 'sent', text: `Revised version r${plan.round + 1} sent (simulated)` }], updatedAt: at }, history: [...r.history, { at, by: 'ProManage (automated)', text: `Revised plan to r${plan.round + 1} after Brand comment` }] } } }
+        }
+        const plan = s.plans[id]
+        if (!plan || plan.status !== 'changes_requested') return s
+        const ask = plan.comments.filter((c) => c.kind === 'changes').pop()?.text ?? ''
+        const inv = s.investigations[id]
+        return { ...s, investigations: inv ? { ...s.investigations, [id]: { ...inv, round: plan.round + 1 } } : s.investigations, plans: { ...s.plans, [id]: { ...plan, round: plan.round + 1, status: 'awaiting_brand_approval', why: `${plan.why} Revised after your comment: “${ask}”.`, comments: [...plan.comments, { at, by: 'promanage', kind: 'sent', text: `Revised version r${plan.round + 1} sent (simulated)` }], updatedAt: at } } }
+      }),
+
+    retryPublication: (taskId) =>
+      setState((s) => {
+        const last = s.publications.filter((a) => a.taskId === taskId).pop()
+        if (!last || last.state !== 'failed') return s
+        const next = attempt(s, taskId, last.proposalKey, last.approvedVersion)
+        return { ...next, activity: log(next, `Retried ${taskId} after ProManage re-validated access (simulated)`, 'status') }
+      }),
+
+    saveGoal: ({ question, locationId, label, importance }) => {
+      const q = question.trim()
+      const goal: PrioritySearchGoal = {
+        id: uid('goal'),
+        organizationId: ORG.id,
+        locationIds: [locationId],
+        anchorQuestion: q,
+        normalizedAnchor: norm(q),
+        label,
+        goalVersion: 1,
+        importance: importance ?? 'standard',
+        status: 'active',
+        promptId: matchPrompt(q, locationId, prompts),
+        history: [{ version: 1, anchorQuestion: q, locationIds: [locationId], at: now() }],
+        createdBy: 'brand',
+        createdAt: now(),
+        updatedAt: now(),
+        simulated: true,
+      }
+      setState((s) => ({ ...s, goals: [...s.goals, goal], selectedGoalId: goal.id, activity: log(s, `Saved visibility goal · “${q}” · ${LOCATION_BY_ID[locationId]?.name}`, 'created') }))
+      return goal
+    },
+
+    updateGoal: (id, patch) =>
+      setState((s) => ({
+        ...s,
+        goals: s.goals.map((g) => {
+          if (g.id !== id) return g
+          if (patch.question && norm(patch.question) !== g.normalizedAnchor) {
+            // A changed question is a new version: earlier observations stay with the old version.
+            const v = g.goalVersion + 1
+            return { ...g, anchorQuestion: patch.question.trim(), normalizedAnchor: norm(patch.question), goalVersion: v, promptId: matchPrompt(patch.question, g.locationIds[0], prompts), history: [...g.history, { version: v, anchorQuestion: patch.question.trim(), locationIds: g.locationIds, at: now() }], updatedAt: now() }
+          }
+          return patch.status ? { ...g, status: patch.status, updatedAt: now() } : g
+        }),
+        selectedGoalId: patch.status === 'archived' && s.selectedGoalId === id ? null : s.selectedGoalId,
+      })),
+
+    selectGoal: (id) => setState((s) => ({ ...s, selectedGoalId: id })),
     setRole: (role) => setState((s) => ({ ...s, role })),
     dismissOnboarding: () => setState((s) => ({ ...s, onboardingDismissed: true })),
     resetDemo: () => {

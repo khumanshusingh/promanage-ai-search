@@ -371,6 +371,8 @@ export interface ReadinessFinding {
   needsSiteOwner?: boolean
   /** Accuracy work on the same source is tracked in the accuracy journey, never merged. */
   linkedAccuracyField?: FieldKey
+  /** The accuracy correction on the same source already delivers this change — don't propose it twice. */
+  coveredByAccuracy?: boolean
   blockedReason?: string
   recommendedAction?: string
 }
@@ -502,4 +504,61 @@ export interface Person {
   title: string
   role: PersonKind
   region?: string
+}
+
+/* ───────────── v7 audit-first lifecycle: authorization, simulated publishing, optional goals ───────────── */
+
+export type DemoChapter = 1 | 2 | 3
+
+export type TargetPermission = 'connected_authorized' | 'connected_read_only' | 'requires_site_admin' | 'third_party_unmanaged' | 'unsupported'
+
+/** Brand decision on a prepared proposal (discovery plan or accuracy correction plan). Immutable once recorded. */
+export interface ProposalApproval {
+  id: string
+  /** `disc:<opportunityId>` or `acc:<issueId>` */
+  proposalKey: string
+  approvedVersion: string
+  approvedTargetIds: string[]
+  approverRole: 'brand'
+  approverName: string
+  verifiedFactVersionIds: string[]
+  action: 'approve' | 'request_changes' | 'decline'
+  comment?: string
+  at: string
+}
+
+/** One simulated write attempt against one target. Never touches recorded AI answers. */
+export interface PublicationAttempt {
+  id: string
+  taskId: string
+  proposalKey: string
+  approvedVersion: string
+  permission: TargetPermission
+  permissionChecked: boolean
+  state: 'success' | 'pending' | 'failed' | 'blocked' | 'manual_handoff'
+  before?: string
+  after?: string
+  detail: string
+  simulated: true
+  recordedAt: string
+}
+
+/** Optional, secondary: a Brand-entered question + location to focus on after the standard check. */
+export interface PrioritySearchGoal {
+  id: string
+  organizationId: string
+  locationIds: string[]
+  anchorQuestion: string
+  normalizedAnchor: string
+  label?: string
+  goalVersion: number
+  importance?: 'standard' | 'high'
+  status: 'active' | 'paused' | 'archived'
+  /** Existing prompt template this exact question matches (seeded demo evidence), if any. */
+  promptId?: string
+  history: { version: number; anchorQuestion: string; locationIds: string[]; at: string }[]
+  createdBy: 'brand' | 'promanage'
+  createdAt: string
+  updatedAt: string
+  simulated: true
 }
