@@ -115,7 +115,7 @@ export default function App() {
   return (
     <AppStoreProvider>
       <TooltipProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
             <Route element={<AppShell />}>
               <Route index element={<Navigate to="/overview" replace />} />

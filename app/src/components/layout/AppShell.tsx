@@ -297,6 +297,9 @@ export function AppShell() {
         <main className="print-full mx-auto max-w-[1440px] px-4 pb-16 pt-6 sm:px-6 lg:px-8 lg:pt-8">
           <Outlet />
         </main>
+        <footer className="no-print border-t border-line px-4 py-4 text-center text-[12px] text-muted sm:px-6 lg:px-8">
+          Concept prototype by Khumanshu Singh for a ProManage product roadmap assignment · fictional brand and simulated data · not an official ProManage product
+        </footer>
       </div>
     </div>
   )
