@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Issue } from '@/data/types'
 import { LOCATION_BY_ID, PEOPLE } from '@/data/seed'
@@ -13,14 +13,14 @@ import { CATEGORY_LABEL } from '@/lib/discovery'
 import { FIELD_PHRASE } from '@/lib/brandStatus'
 import { FactComparison } from '@/components/brand'
 import { RecommendationCard } from '@/components/discovery'
-import { PageHeader, PermButton } from '@/components/domain'
+import { KpiCard, PageHeader, PermButton } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog } from '@/components/ui/dialog'
 import { FieldError, Textarea } from '@/components/ui/input'
-import { EmptyState, Progress } from '@/components/ui/misc'
+import { EmptyState, Progress, Segmented } from '@/components/ui/misc'
 import { cn, fmtDate, fmtDateTime } from '@/lib/utils'
 
 interface Target {
@@ -259,27 +259,18 @@ function DecisionBar({ proposalKey, targets, locationId, onApproved }: { proposa
   )
 }
 
+/** Detail pane for the selected proposal (ProManage-style master/detail). */
 function ProposalShell({ id, type, title, status, round, children }: { id: string; type: 'disc' | 'acc'; title: string; status: string; round: number; children: React.ReactNode }) {
-  const { hash } = useLocation()
-  const [open, setOpen] = useState(hash === `#${id}` || id.includes('whitefield') || id.includes('issue-saturday-tours'))
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (hash === `#${id}`) {
-      setOpen(true)
-      setTimeout(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
-    }
-  }, [hash, id])
   return (
-    <div ref={ref} id={id} className="scroll-mt-24">
+    <div id={id} className="scroll-mt-24">
       <Card>
-        <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full flex-wrap items-center gap-2 px-5 py-3.5 text-left hover:bg-subtle">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-4">
           <Badge tone={type === 'disc' ? 'teal' : 'blue'}>{type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
-          <span className="min-w-0 flex-1 text-[15px] font-semibold text-ink">{title}</span>
+          <h2 className="min-w-0 flex-1 text-[16px] font-semibold text-ink">{title}</h2>
           <Badge tone={status === 'Awaiting your authorization' ? 'warning' : status.startsWith('Authorized') ? 'success' : 'neutral'}>{status}</Badge>
           <span className="text-[12px] text-muted">v{round}</span>
-          <ChevronDown className={cn('size-4 text-muted transition-transform', open && 'rotate-180')} />
-        </button>
-        {open && <div className="space-y-4 border-t border-line px-5 py-4">{children}</div>}
+        </div>
+        <div className="space-y-5 px-5 py-4">{children}</div>
       </Card>
     </div>
   )
@@ -461,8 +452,18 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
 }
 
 export default function ImprovePage() {
-  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal } = useStore()
+  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal, publications } = useStore()
   const disc = useDiscovery()
+  const { hash } = useLocation()
+  const [sel, setSel] = useState<string | null>(null)
+  const [filter, setFilter] = useState<'all' | 'awaiting' | 'authorized' | 'closed'>('all')
+  useEffect(() => {
+    if (hash) {
+      setSel(decodeURIComponent(hash.slice(1)))
+      setFilter('all')
+      setTimeout(() => document.getElementById('proposal-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+    }
+  }, [hash])
   const first = useRef(release === 'MVP')
   useEffect(() => {
     if (first.current) toast.success('V1 unlocked: recommendations and approvals are now available')
@@ -490,13 +491,25 @@ export default function ImprovePage() {
   const needsConfirm = disc.latest.filter((o) => o.status === 'eligibility_review' && inScope(o.locationId))
   const awaiting = discPlans.filter((o) => disc.record(o.id)?.plan?.status === 'awaiting_brand_approval').length + accIssues.filter((i) => plans[i.id].status === 'awaiting_brand_approval').length
   const locs = [...new Set([...discPlans.map((o) => o.locationId), ...accIssues.map((i) => i.locationId)])].sort((a, b) => (a === 'whitefield' ? -1 : b === 'whitefield' ? 1 : a.localeCompare(b)))
+  const items = locs.flatMap((locId) => [
+    ...discPlans
+      .filter((o) => o.locationId === locId)
+      .map((o) => ({ key: `disc:${o.id}`, type: 'disc' as const, title: `${LOCATION_BY_ID[locId].name} — help parents find your centre`, status: disc.record(o.id)!.plan!.status as string, node: <DiscoveryProposal key={o.id} oppId={o.id} /> })),
+    ...accIssues
+      .filter((i) => i.locationId === locId)
+      .map((i) => ({ key: `acc:${i.id}`, type: 'acc' as const, title: `${LOCATION_BY_ID[locId].name} — correct ${i.field ? (FIELD_PHRASE[i.field] ?? i.field) : 'information'}`, status: plans[i.id].status as string, node: <AccuracyProposal key={i.id} issue={i} /> })),
+  ])
+  const current = items.find((i) => i.key === sel) ?? items.find((i) => i.status === 'awaiting_brand_approval') ?? items[0]
+  // Keep the proposal you're looking at selected, even after its status changes.
+  if (!sel && current) queueMicrotask(() => setSel(current.key))
+  const taskKeys = new Set(items.map((i) => i.key))
+  const latestByTask = Object.values(Object.fromEntries(publications.filter((p) => taskKeys.has(p.proposalKey)).map((p) => [p.taskId, p])))
 
   return (
     <div className="animate-fade-in space-y-5">
       <PageHeader
         title="ProManage has prepared improvements"
         subtitle="From your latest standard check. ProManage checked the business information, listings, genuine reviews, location data and local content it manages — you review and authorize."
-        actions={<Badge tone={awaiting ? 'warning' : 'neutral'}>{awaiting} awaiting your authorization</Badge>}
       />
       {goal && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-line bg-brand-soft px-4 py-2.5 text-[13.5px] text-ink">
@@ -510,13 +523,55 @@ export default function ImprovePage() {
         <Sparkles className="size-4 text-teal-ink" />
         Prepared automatically by ProManage (simulated) on {fmtDateTime(autoPrepared[latestAudit.id] ?? new Date().toISOString())}. Opening this tab doesn’t approve or publish anything.
       </p>
-      {locs.map((locId) => (
-        <section key={locId} className="space-y-3">
-          <h2 className="text-[16px] font-semibold text-ink">{LOCATION_BY_ID[locId].name}</h2>
-          {discPlans.filter((o) => o.locationId === locId).map((o) => <DiscoveryProposal key={o.id} oppId={o.id} />)}
-          {accIssues.filter((i) => i.locationId === locId).map((i) => <AccuracyProposal key={i.id} issue={i} />)}
-        </section>
-      ))}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard label="Proposals prepared" value={items.length} icon={<Sparkles />} tone="blue" definition="Evidence-backed proposals ProManage prepared from your standard check (simulated)." footer={`${items.filter((i) => i.type === 'disc').length} discoverability · ${items.filter((i) => i.type === 'acc').length} accuracy`} />
+        <KpiCard label="Awaiting your authorization" value={awaiting} icon={<ShieldCheck />} tone="warning" definition="Proposals waiting for your decision. Nothing is published before you authorize it." footer="Approve, request changes or decline" />
+        <KpiCard label="Sources updated" value={latestByTask.filter((p) => p.state === 'success').length} detail={`of ${latestByTask.length} targets`} icon={<CheckCircle2 />} tone="teal" definition="Connected, write-authorized targets updated after your authorization. Demo: simulated publication." footer="AI answers are unchanged until rechecked" />
+        <KpiCard label="Needs follow-up" value={latestByTask.filter((p) => p.state !== 'success').length} icon={<RotateCcw />} tone="neutral" definition="Targets that need ProManage, a site admin or an external owner — never marked updated." footer="Handoffs, access or failed attempts" />
+      </div>
+      {items.length === 0 ? (
+        <Card>
+          <EmptyState icon={<Sparkles />} title="No proposals yet" description="ProManage prepares proposals when your standard check has confirmed, controllable gaps." />
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+          <Card className="self-start xl:sticky xl:top-[84px]">
+            <CardHeader title="Proposals" description="Grouped by location · one queue for both finding types" />
+            <div className="border-b border-line px-4 py-2.5">
+              <Segmented
+                ariaLabel="Proposal status"
+                size="sm"
+                value={filter}
+                onChange={setFilter}
+                options={[
+                  { value: 'all', label: `All · ${items.length}` },
+                  { value: 'awaiting', label: 'Awaiting' },
+                  { value: 'authorized', label: 'Authorized' },
+                  { value: 'closed', label: 'Other' },
+                ]}
+              />
+            </div>
+            <ul className="divide-y divide-line">
+              {items
+                .filter((i) => filter === 'all' || (filter === 'awaiting' ? i.status === 'awaiting_brand_approval' : filter === 'authorized' ? i.status === 'approved' : !['awaiting_brand_approval', 'approved'].includes(i.status)))
+                .map((i) => (
+                  <li key={i.key}>
+                    <button onClick={() => setSel(i.key)} aria-current={current?.key === i.key} className={cn('flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-subtle', current?.key === i.key && 'bg-brand-soft/50')}>
+                      <span className="flex items-center gap-2">
+                        <Badge tone={i.type === 'disc' ? 'teal' : 'blue'}>{i.type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
+                        <Badge tone={i.status === 'awaiting_brand_approval' ? 'warning' : i.status === 'approved' ? 'success' : 'neutral'}>{planStatus(i.status)}</Badge>
+                      </span>
+                      <span className="text-[14px] font-medium text-ink">{i.title}</span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </Card>
+          <div id="proposal-detail" className="min-w-0 scroll-mt-24">
+            {current?.node}
+          </div>
+        </div>
+      )}
       {(noGap.length > 0 || accNoSource.length > 0) && (
         <Card>
           <CardHeader title="No confirmed, controllable gap found" description="No supported change recommended yet — ProManage keeps monitoring these" />

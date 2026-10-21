@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, Clock, FileText, RadioTower, ScanSearch } from 'lucide-react'
+import { CheckCircle2, Clock, FileText, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 import type { Issue } from '@/data/types'
 import { LOCATION_BY_ID } from '@/data/seed'
@@ -11,7 +12,8 @@ import { STATE_LABEL } from '@/lib/publishing'
 import { FIELD_PHRASE } from '@/lib/brandStatus'
 import { RecheckResult } from '@/components/discovery'
 import { EvidenceDisclosure } from '@/components/brand'
-import { PageHeader, PermButton } from '@/components/domain'
+import { KpiCard, PageHeader, PermButton } from '@/components/domain'
+import { Table, Td, Th, Tr } from '@/components/ui/table'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -72,7 +74,7 @@ function AccuracyOutcome({ issue, wave }: { issue: Issue; wave: number | null })
 }
 
 export default function MeasurePage() {
-  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal } = useStore()
+  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
   const disc = useDiscovery()
   const first = useRef(release !== 'V2')
   const ran = useRef(false)
@@ -126,6 +128,12 @@ export default function MeasurePage() {
   const before = disc.metricsFor(latestAudit.id, 0)
   const after = wave ? disc.metricsFor(latestAudit.id, wave) : null
   const unresolved = mine.filter((p) => p.state !== 'success' && !mine.some((q) => q.taskId === p.taskId && q.state === 'success'))
+  const latestByTask = Object.values(Object.fromEntries(mine.map((p) => [p.taskId, p])))
+  const accNoMismatch = wave ? accApproved.filter((i) => outcomeForIssue(i, observationsFor(latestAudit.id, 0), observationsFor(latestAudit.id, wave), promptsById, revisedFacts(rechecks.find((r) => r.wave === wave))) === 'changed').length : 0
+  const chart = latestAudit.locationIds.map((id) => {
+    const el = (w: number) => disc.observationsOf({ auditId: latestAudit.id, locationId: id }, w).filter((o) => disc.eligibility(id, o.promptId).status === 'eligible' && o.mentioned).length
+    return { name: LOCATION_BY_ID[id].neighborhood, Original: el(0), ...(wave ? { [`Follow-up ${wave}`]: el(wave) } : {}) }
+  })
 
   return (
     <div className="animate-fade-in space-y-5">
@@ -160,22 +168,63 @@ export default function MeasurePage() {
         </Card>
       ) : (
         <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiCard label="Sources updated" value={latestByTask.filter((p) => p.state === 'success').length} detail={`of ${latestByTask.length} targets`} icon={<CheckCircle2 />} tone="teal" definition="Connected, write-authorized targets updated after your authorization. Demo: simulated publication." footer="Source change ≠ AI answer change" />
+            <KpiCard label="Needs follow-up" value={unresolved.length} icon={<Clock />} tone="warning" definition="Targets that need ProManage, a site admin or an external owner. Never marked updated." footer="Handoffs, access or failed attempts" />
+            <KpiCard label="Eligible mention rate" value={after ? `${after.eligibleMentioned}/${after.eligible}` : '—'} detail={`was ${before.eligibleMentioned}/${before.eligible}`} icon={<TrendingUp />} tone="blue" definition="Unbranded sampled recommendations naming the right centre, across all checked centres. Same questions and centres; one answer per question." footer={after ? `Follow-up ${wave} vs original check` : 'Awaiting follow-up check'} />
+            <KpiCard label="Accuracy corrections" value={wave ? `${accNoMismatch}/${accApproved.length}` : '—'} icon={<ShieldCheck />} tone="neutral" definition="Authorized accuracy corrections whose latest sampled answer no longer shows the incorrect statement." footer={wave ? 'No mismatch in latest sampled check' : 'Awaiting follow-up check'} />
+          </div>
+
+          {wave && (
+            <Card>
+              <CardHeader title="Mentions by centre · original vs follow-up" description={`Eligible unbranded sampled recommendations · follow-up ${wave} · Surface A · simulated`} />
+              <div className="h-[230px] px-3 pb-2 pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chart} margin={{ top: 8, right: 16, left: -16, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11.5, fill: '#6b7a90' }} tickLine={false} axisLine={{ stroke: '#e3eaf1' }} interval={0} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#6b7a90' }} tickLine={false} axisLine={false} />
+                    <Tooltip cursor={{ fill: 'rgba(148,163,184,0.12)' }} contentStyle={{ borderRadius: 8, border: '1px solid #e3eaf1', fontSize: 12.5 }} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="Original" fill="#cfd8e3" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey={`Follow-up ${wave}`} fill="var(--chart-1)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="border-t border-line px-5 py-2.5 text-[12px] text-muted">Sampled observations. Answers vary between samples; a change isn’t proof the updates caused it.</p>
+            </Card>
+          )}
+
           <Card>
             <CardHeader title="What changed on your sources" description="Per-target results of your authorizations · Demo: simulated publication" />
-            <ul className="divide-y divide-line">
-              {mine.map((p) => {
-                const t = tasks.find((x) => x.id === p.taskId)
-                const st = STATE_LABEL[p.state]
-                return (
-                  <li key={p.id} className="flex flex-wrap items-center gap-3 px-5 py-2.5">
-                    <Badge tone={p.proposalKey.startsWith('disc') ? 'teal' : 'blue'}>{p.proposalKey.startsWith('disc') ? 'Discoverability' : 'Accuracy'}</Badge>
-                    <span className="min-w-0 flex-1 text-[13.5px] text-ink">{t?.title}</span>
-                    <Badge tone={st.tone}>{st.label}</Badge>
-                    <span className="text-[12px] text-muted">{fmtDateTime(p.recordedAt)}</span>
-                  </li>
-                )
-              })}
-            </ul>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Type</Th>
+                  <Th>Target</Th>
+                  <Th>Result</Th>
+                  <Th>Recorded</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {mine.map((p) => {
+                  const t = tasks.find((x) => x.id === p.taskId)
+                  const st = STATE_LABEL[p.state]
+                  return (
+                    <Tr key={p.id}>
+                      <Td>
+                        <Badge tone={p.proposalKey.startsWith('disc') ? 'teal' : 'blue'}>{p.proposalKey.startsWith('disc') ? 'Discoverability' : 'Accuracy'}</Badge>
+                      </Td>
+                      <Td className="text-[13.5px] text-ink">{t?.title}</Td>
+                      <Td>
+                        <Badge tone={st.tone}>{st.label}</Badge>
+                      </Td>
+                      <Td className="whitespace-nowrap text-[12.5px] text-muted">{fmtDateTime(p.recordedAt)}</Td>
+                    </Tr>
+                  )
+                })}
+              </tbody>
+            </Table>
           </Card>
 
           {!wave && (

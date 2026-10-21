@@ -66,6 +66,11 @@ export async function start({ port = 9335, width = 1440, height = 1000 } = {}) {
       await sleep(450)
       if (ok !== 'ok') throw new Error(`click "${t}": ${ok}`)
     },
+    /** Set a native <select> value the way React expects. */
+    select: async (selector, value) => {
+      await ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+      await sleep(300)
+    },
     exists: (t) => ev(`[...document.querySelectorAll('button, a')].some((e) => e.offsetParent !== null && e.innerText.trim().includes(${JSON.stringify(t)}))`),
     type: async (selector, value) => {
       await ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
