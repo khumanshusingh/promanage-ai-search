@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, Clock, FileText, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ArrowRight, CheckCircle2, Clock, FileText, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
+import { hasMismatch, isDiscovery } from '@/lib/metrics'
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 import type { Issue } from '@/data/types'
 import { LOCATION_BY_ID } from '@/data/seed'
@@ -73,6 +74,56 @@ function AccuracyOutcome({ issue, wave }: { issue: Issue; wave: number | null })
   )
 }
 
+/** Before → after for one lens: big delta, direction-aware colour, and a bar per check. */
+function DeltaCard({ title, subtitle, series, betterWhen, unit, icon, color }: { title: string; subtitle: string; series: { label: string; value: number; of?: number }[]; betterWhen: 'up' | 'down'; unit: string; icon: React.ReactNode; color: string }) {
+  const first = series[0]
+  const last = series[series.length - 1]
+  const delta = last.value - first.value
+  const good = delta === 0 ? null : betterWhen === 'up' ? delta > 0 : delta < 0
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-5 pt-4">
+        <div>
+          <p className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+            {icon}
+            {title}
+          </p>
+          <p className="text-[12.5px] text-muted">{subtitle}</p>
+        </div>
+        <Badge tone={good === null ? 'neutral' : good ? 'success' : 'danger'} className="text-[13px]">
+          {delta > 0 ? '+' : ''}
+          {delta} {unit}
+        </Badge>
+      </div>
+      <div className="flex items-baseline gap-3 px-5 pt-3">
+        <span className="tabular text-[30px] font-semibold leading-none text-muted">{first.value}</span>
+        <ArrowRight className="size-5 self-center text-muted" />
+        <span className="tabular text-[30px] font-semibold leading-none text-ink">{last.value}</span>
+        <span className="text-[13px] text-body">
+          {first.of !== undefined ? `of ${last.of} ` : ''}
+          {unit}
+        </span>
+      </div>
+      <div className="h-[170px] px-3 pb-1 pt-3">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={series} margin={{ top: 18, right: 12, left: -24, bottom: 0 }}>
+            <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#6b7a90' }} tickLine={false} axisLine={{ stroke: '#e3eaf1' }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#6b7a90' }} tickLine={false} axisLine={false} />
+            <Tooltip cursor={{ fill: 'rgba(148,163,184,0.12)' }} contentStyle={{ borderRadius: 8, border: '1px solid #e3eaf1', fontSize: 12.5 }} formatter={(v: number) => [`${v} ${unit}`, title]} />
+            <Bar dataKey="value" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+              {series.map((d, i) => (
+                <Cell key={d.label} fill={i === 0 ? '#cfd8e3' : color} />
+              ))}
+              <LabelList dataKey="value" position="top" style={{ fontSize: 12, fill: '#45546b' }} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
+  )
+}
+
 export default function MeasurePage() {
   const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
   const disc = useDiscovery()
@@ -130,6 +181,14 @@ export default function MeasurePage() {
   const unresolved = mine.filter((p) => p.state !== 'success' && !mine.some((q) => q.taskId === p.taskId && q.state === 'success'))
   const latestByTask = Object.values(Object.fromEntries(mine.map((p) => [p.taskId, p])))
   const accNoMismatch = wave ? accApproved.filter((i) => outcomeForIssue(i, observationsFor(latestAudit.id, 0), observationsFor(latestAudit.id, wave), promptsById, revisedFacts(rechecks.find((r) => r.wave === wave))) === 'changed').length : 0
+  const waves = [0, ...rechecks.filter((r) => !wave || r.wave <= wave).map((r) => r.wave)]
+  const label = (w: number) => (w === 0 ? 'Original' : `Follow-up ${w}`)
+  const discSeries = waves.map((w) => {
+    const mm = disc.metricsFor(latestAudit.id, w)
+    return { label: label(w), value: mm.eligibleMentioned, of: mm.eligible }
+  })
+  const incorrectSeries = waves.map((w) => ({ label: label(w), value: observationsFor(latestAudit.id, w).filter((o) => !isDiscovery(o, promptsById) && hasMismatch(o)).length }))
+  const updatesAt = latestSuccess
   const chart = latestAudit.locationIds.map((id) => {
     const el = (w: number) => disc.observationsOf({ auditId: latestAudit.id, locationId: id }, w).filter((o) => disc.eligibility(id, o.promptId).status === 'eligible' && o.mentioned).length
     return { name: LOCATION_BY_ID[id].neighborhood, Original: el(0), ...(wave ? { [`Follow-up ${wave}`]: el(wave) } : {}) }
@@ -168,6 +227,24 @@ export default function MeasurePage() {
         </Card>
       ) : (
         <>
+          {wave && (
+            <Card className="border-brand-line">
+              <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3.5">
+                <p className="text-[16px] font-semibold text-ink">Before and after your changes</p>
+                <span className="text-[13px] text-body">
+                  Original check {fmtDate(latestAudit.createdAt)} → follow-up {wave} sampled {fmtDate(rechecks.find((r) => r.wave === wave)!.sampledAt)}, after {successes.length} source update{successes.length === 1 ? '' : 's'}
+                  {updatesAt ? ` on ${fmtDate(updatesAt)}` : ''}
+                </span>
+                <Badge tone="neutral" className="ml-auto">Same questions & centres · simulated</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-2">
+                <DeltaCard title="Discoverability" subtitle="Eligible sampled recommendations that mention your centre — higher is better" series={discSeries} betterWhen="up" unit="mentions" icon={<TrendingUp className="size-4 text-teal-ink" />} color="#0e9aa7" />
+                <DeltaCard title="Information accuracy" subtitle="Answers about your centres with incorrect information — lower is better" series={incorrectSeries} betterWhen="down" unit="incorrect answers" icon={<ShieldCheck className="size-4 text-brand" />} color="var(--chart-1)" />
+              </div>
+              <p className="border-t border-line px-5 py-2.5 text-[12.5px] text-muted">One sampled answer per question. These are observed changes after your updates — not proof the updates caused them, and future answers can differ.</p>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiCard label="Sources updated" value={latestByTask.filter((p) => p.state === 'success').length} detail={`of ${latestByTask.length} targets`} icon={<CheckCircle2 />} tone="teal" definition="Connected, write-authorized targets updated after your authorization. Demo: simulated publication." footer="Source change ≠ AI answer change" />
             <KpiCard label="Needs follow-up" value={unresolved.length} icon={<Clock />} tone="warning" definition="Targets that need ProManage, a site admin or an external owner. Never marked updated." footer="Handoffs, access or failed attempts" />

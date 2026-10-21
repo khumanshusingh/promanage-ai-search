@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Issue } from '@/data/types'
-import { LOCATION_BY_ID, PEOPLE } from '@/data/seed'
+import type { Issue, Task } from '@/data/types'
+import { LOCATION_BY_ID } from '@/data/seed'
 import { parseOpp, useStore } from '@/store/AppStore'
 import { useDiscovery } from '@/lib/useDiscovery'
 import { buildFacts, effectiveLocation } from '@/lib/facts'
@@ -12,7 +12,6 @@ import { aggregate, AGGREGATE_LABEL, PERMISSION_LABEL, STATE_LABEL, targetPermis
 import { CATEGORY_LABEL } from '@/lib/discovery'
 import { FIELD_PHRASE } from '@/lib/brandStatus'
 import { FactComparison } from '@/components/brand'
-import { RecommendationCard } from '@/components/discovery'
 import { KpiCard, PageHeader, PermButton } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -127,95 +126,138 @@ function TechnicalDetails({ locationId, targets, contentDiffs }: { locationId: s
   )
 }
 
-function Execution({ proposalKey, taskIds }: { proposalKey: string; taskIds: string[] }) {
-  const { tasks, publications, retryPublication } = useStore()
+interface Fix {
+  id: string
+  title: string
+  where: string
+  channel: Target['channel']
+  before?: string | null
+  after?: string | null
+  facts?: string[]
+  note?: string
+}
+
+/** Which task carries a fix after approval (structured data is published with the website task). */
+function taskForFix(fix: Fix, taskIds: string[], tasks: Task[], kind: 'disc' | 'acc') {
+  const own = tasks.filter((t) => taskIds.includes(t.id))
+  if (fix.channel === 'structured_info') return own.find((t) => t.assetKinds.includes('jsonld')) ?? own.find((t) => t.channel === 'owned_website')
+  return kind === 'disc' ? own.find((t) => t.recommendationId === fix.id) : own.find((t) => t.channel === fix.channel)
+}
+
+function Clamp({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const long = text.length > 160
+  return (
+    <>
+      <p className={cn('whitespace-pre-line text-[13.5px] leading-relaxed', !open && long && 'line-clamp-3')}>{text}</p>
+      {long && (
+        <button className="mt-1 text-[12.5px] font-medium text-brand hover:underline" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Show less' : 'Show full text'}
+        </button>
+      )}
+    </>
+  )
+}
+
+/** The actionable heart of a proposal: selectable fix cards + one authorize bar, or per-target results after approval. */
+function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApproved }: { proposalKey: string; kind: 'disc' | 'acc'; locationId: string; fixes: Fix[]; status: string; taskIds: string[]; onApproved: () => void }) {
+  const { authorizeProposal, rejectProposal, reviseProposal, tasks, publications, retryPublication } = useStore()
+  const [picked, setPicked] = useState<string[]>(fixes.map((f) => f.id))
+  const [dlg, setDlg] = useState<null | 'approve' | 'request_changes' | 'decline'>(null)
+  const [text, setText] = useState('')
+  const [err, setErr] = useState<string>()
+  const awaiting = status === 'awaiting_brand_approval'
+  const approved = status === 'approved'
+  const perm = (f: Fix) => targetPermission({ channel: f.channel === 'structured_info' ? 'owned_website' : (f.channel as never), recommendationId: f.id, locationId })
+  const auto = fixes.filter((f) => picked.includes(f.id) && perm(f).permission === 'connected_authorized').length
   const agg = aggregate(publications, taskIds)
   return (
-    <div className="space-y-2">
-      <p className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-ink">
-        {AGGREGATE_LABEL[agg]}
-        <Badge tone="neutral">Demo: simulated publication</Badge>
-      </p>
-      <ul className="divide-y divide-line rounded-xl border border-line">
-        {taskIds.map((id) => {
-          const t = tasks.find((x) => x.id === id)
-          const last = publications.filter((a) => a.taskId === id).pop()
-          if (!t) return null
-          const st = last ? STATE_LABEL[last.state] : { label: 'Waiting', tone: 'neutral' as const }
+    <div className="rounded-xl border-2 border-brand-line bg-brand-soft/30">
+      <div className="flex flex-wrap items-center gap-3 border-b border-brand-line px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-semibold text-ink">
+            {fixes.length} recommended fix{fixes.length === 1 ? '' : 'es'}
+          </p>
+          <p className="text-[12.5px] text-body">
+            {approved ? AGGREGATE_LABEL[agg] : awaiting ? `${picked.length} selected · ${auto} publish automatically after approval · ${picked.length - auto} need follow-up` : status === 'declined' ? 'You declined these fixes. Nothing was published.' : 'ProManage is revising these fixes. Nothing was published.'}
+          </p>
+        </div>
+        {awaiting && (
+          <div className="flex flex-wrap gap-2">
+            <PermButton perm="approvePlan" variant="primary" disabled={!picked.length} onClick={() => { setText(''); setDlg('approve') }}>
+              <ShieldCheck />
+              Approve & authorize ({picked.length})
+            </PermButton>
+            <PermButton perm="approvePlan" onClick={() => { setText(''); setErr(undefined); setDlg('request_changes') }}>
+              Request changes
+            </PermButton>
+            <PermButton perm="approvePlan" variant="ghost" onClick={() => { setText(''); setErr(undefined); setDlg('decline') }}>
+              Decline
+            </PermButton>
+          </div>
+        )}
+        {status === 'changes_requested' && (
+          <Button size="sm" onClick={() => { reviseProposal(proposalKey); toast.success('Revised version ready for authorization (simulated)') }}>
+            See revised version
+          </Button>
+        )}
+        {approved && <Badge tone="neutral">Demo: simulated publication</Badge>}
+      </div>
+      <ul className="space-y-2.5 p-3">
+        {fixes.map((f) => {
+          const pm = perm(f)
+          const t = approved ? taskForFix(f, taskIds, tasks, kind) : undefined
+          const last = t ? publications.filter((a) => a.taskId === t.id).pop() : undefined
+          const st = last ? STATE_LABEL[last.state] : null
+          const on = picked.includes(f.id)
           return (
-            <li key={id} className="space-y-1 px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="min-w-0 flex-1 text-[13.5px] font-medium text-ink">{t.title}</p>
-                <Badge tone={st.tone}>{st.label}</Badge>
+            <li key={f.id} className={cn('rounded-xl border bg-surface px-4 py-3 shadow-card', awaiting && on ? 'border-brand' : 'border-line')}>
+              <div className="flex items-start gap-3">
+                {awaiting && <Checkbox checked={on} onCheckedChange={(v) => setPicked((p) => (v ? [...p, f.id] : p.filter((x) => x !== f.id)))} aria-label={`Authorize ${f.title}`} className="mt-0.5" />}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[15px] font-semibold text-ink">{f.title}</p>
+                    {st ? <Badge tone={st.tone}>{st.label}</Badge> : <Badge tone={pm.permission === 'connected_authorized' ? 'success' : 'warning'} className="max-w-full whitespace-normal">{PERMISSION_LABEL[pm.permission]}</Badge>}
+                  </div>
+                  <p className="mt-0.5 text-[12.5px] text-muted">{f.where}</p>
+                  {f.channel === 'structured_info' ? (
+                    <p className="mt-2 text-[13.5px] text-body">Search-readable information for the centre page, generated from your verified facts. Preview it in Technical details below.</p>
+                  ) : f.after ? (
+                    <div className="mt-2 grid grid-cols-1 items-stretch gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                      <div className="rounded-lg bg-subtle px-3 py-2 text-body">
+                        <p className="mb-0.5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-muted">Now</p>
+                        <Clamp text={f.before ?? 'Not stated'} />
+                      </div>
+                      <ArrowRight className="hidden size-4 self-center text-muted md:block" />
+                      <div className="rounded-lg bg-teal-soft/60 px-3 py-2 text-ink">
+                        <p className="mb-0.5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-teal-ink">{f.channel === 'external_request' ? 'We’ll request' : 'After'}</p>
+                        <Clamp text={f.after} />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-[13.5px] text-body">No wording change — a check for the site owner to confirm.</p>
+                  )}
+                  {f.facts && f.facts.length > 0 && <p className="mt-1.5 text-[12px] text-muted">Uses your verified facts: {f.facts.join(' · ')}</p>}
+                  {f.note && <p className="mt-1 text-[12px] text-warning">{f.note}</p>}
+                  {last && <p className="mt-1.5 text-[12.5px] text-body">{last.detail}</p>}
+                  {last?.state === 'failed' && t && (
+                    <Button size="sm" className="mt-2" onClick={() => { retryPublication(t.id); toast.success('ProManage retried within the same approval (simulated)') }}>
+                      <RotateCcw />
+                      ProManage follow-up: retry
+                    </Button>
+                  )}
+                </div>
               </div>
-              <p className="text-[12.5px] text-muted">
-                {t.target} · owner {PEOPLE.find((p) => p.id === t.assigneeId)?.name}
-              </p>
-              {last && <p className="text-[12.5px] text-body">{last.detail}</p>}
-              {last && last.state === 'success' && (last.before || last.after) && (
-                <p className="text-[12px] text-body">
-                  <span className="text-muted">Source snapshot:</span> “{(last.before ?? 'not stated').slice(0, 80)}” → “{(last.after ?? '').slice(0, 80)}{(last.after ?? '').length > 80 ? '…' : ''}”
-                </p>
-              )}
-              {last?.state === 'failed' && (
-                <Button size="sm" onClick={() => { retryPublication(id); toast.success('ProManage retried within the same approval (simulated)') }}>
-                  <RotateCcw />
-                  ProManage follow-up: retry
-                </Button>
-              )}
             </li>
           )
         })}
       </ul>
-      <p className="text-[12.5px] text-muted">Recorded AI answers are unchanged. A source update is a completed action — it doesn’t mean any AI answer has changed yet. {proposalKey.startsWith('acc') ? 'Accuracy' : 'Discovery'} outcome is measured separately in 03 Measure.</p>
-    </div>
-  )
-}
-
-function DecisionBar({ proposalKey, targets, locationId, onApproved }: { proposalKey: string; targets: Target[]; locationId: string; onApproved: () => void }) {
-  const { authorizeProposal, rejectProposal } = useStore()
-  const selectable = targets.filter((t) => t.channel !== 'verification')
-  const [picked, setPicked] = useState<string[]>(selectable.map((t) => t.id))
-  const [dlg, setDlg] = useState<null | 'approve' | 'request_changes' | 'decline'>(null)
-  const [text, setText] = useState('')
-  const [err, setErr] = useState<string>()
-  return (
-    <>
-      <div>
-        <p className="mb-1.5 text-[13px] font-semibold text-ink">Which sources will be changed</p>
-        <ul className="divide-y divide-line rounded-xl border border-line">
-          {selectable.map((t) => {
-            const perm = targetPermission({ channel: t.channel === 'structured_info' ? 'owned_website' : (t.channel as never), recommendationId: t.id, locationId })
-            return (
-              <li key={t.id} className="flex flex-wrap items-start gap-3 px-4 py-2.5">
-                <Checkbox checked={picked.includes(t.id)} onCheckedChange={(v) => setPicked((p) => (v ? [...p, t.id] : p.filter((x) => x !== t.id)))} aria-label={`Authorize ${t.label}`} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13.5px] font-medium text-ink">{t.label}</p>
-                  <p className="text-[12.5px] text-muted">{t.where}</p>
-                </div>
-                <Badge tone={perm.permission === 'connected_authorized' ? 'success' : 'warning'} className="max-w-full whitespace-normal">{PERMISSION_LABEL[perm.permission]}</Badge>
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <PermButton perm="approvePlan" variant="primary" disabled={!picked.length} onClick={() => { setText(''); setDlg('approve') }}>
-          <ShieldCheck />
-          Approve & authorize ({picked.length})
-        </PermButton>
-        <PermButton perm="approvePlan" onClick={() => { setText(''); setErr(undefined); setDlg('request_changes') }}>
-          Request changes
-        </PermButton>
-        <PermButton perm="approvePlan" variant="ghost" onClick={() => { setText(''); setErr(undefined); setDlg('decline') }}>
-          Decline
-        </PermButton>
-      </div>
+      {approved && <p className="border-t border-brand-line px-4 py-2.5 text-[12.5px] text-muted">Recorded AI answers are unchanged. A source update doesn’t mean any AI answer has changed — that’s measured in 03 Measure.</p>}
       <Dialog
         open={!!dlg}
         onOpenChange={(o) => !o && setDlg(null)}
         title={dlg === 'approve' ? 'Here is exactly what will change' : dlg === 'request_changes' ? 'Request changes' : 'Decline these changes?'}
-        description={dlg === 'approve' ? `You authorize ${picked.length} selected target${picked.length === 1 ? '' : 's'} for this version. ProManage then applies them to connected sources it’s permitted to update (simulated); anything else becomes a follow-up.` : dlg === 'request_changes' ? 'Nothing is published. ProManage revises and asks for a new authorization.' : 'Nothing is published.'}
+        description={dlg === 'approve' ? `You authorize ${picked.length} selected fix${picked.length === 1 ? '' : 'es'} for this version. ProManage applies them to connected sources it’s permitted to update (simulated); anything else becomes a follow-up.` : dlg === 'request_changes' ? 'Nothing is published. ProManage revises and asks for a new authorization.' : 'Nothing is published.'}
         footer={
           <>
             <Button onClick={() => setDlg(null)}>Cancel</Button>
@@ -240,11 +282,11 @@ function DecisionBar({ proposalKey, targets, locationId, onApproved }: { proposa
       >
         {dlg === 'approve' ? (
           <ul className="list-disc space-y-1 pl-5 text-[13.5px] text-ink">
-            {selectable
-              .filter((t) => picked.includes(t.id))
-              .map((t) => (
-                <li key={t.id}>
-                  {t.label} <span className="text-muted">· {t.where}</span>
+            {fixes
+              .filter((f) => picked.includes(f.id))
+              .map((f) => (
+                <li key={f.id}>
+                  {f.title} <span className="text-muted">· {f.where}</span>
                 </li>
               ))}
           </ul>
@@ -255,11 +297,60 @@ function DecisionBar({ proposalKey, targets, locationId, onApproved }: { proposa
           </>
         )}
       </Dialog>
-    </>
+    </div>
   )
 }
 
-/** Detail pane for the selected proposal (ProManage-style master/detail). */
+const planStatus = (s: string) => (s === 'awaiting_brand_approval' ? 'Awaiting your authorization' : s === 'approved' ? 'Authorized' : s === 'changes_requested' ? 'Changes requested' : s === 'declined' ? 'Declined' : 'Draft')
+
+function FindingLine({ children }: { children: React.ReactNode }) {
+  return <div className="rounded-xl border border-line bg-subtle/60 px-4 py-3 text-[14px] text-ink">{children}</div>
+}
+
+function DiscoveryProposal({ oppId }: { oppId: string }) {
+  const { byId, record, findingsFor, observationsOf } = useDiscovery()
+  const { factEdits } = useStore()
+  const [applying, setApplying] = useState(false)
+  const opp = byId[oppId]
+  const plan = record(oppId)?.plan
+  if (!opp || !plan) return null
+  const loc = LOCATION_BY_ID[opp.locationId]
+  const missed = observationsOf(opp).filter((o) => opp.targetPromptIds.includes(o.promptId))
+  const findings = findingsFor(opp)
+  const facts = buildFacts(opp.locationId, factEdits)
+  const targets: Target[] = plan.recommendations.map((r) => ({ id: r.id, label: r.brandTitle, where: r.controlledSource, channel: r.channel }))
+  const fixes: Fix[] = plan.recommendations.map((r) => ({ id: r.id, title: r.brandTitle, where: r.controlledSource, channel: r.channel, before: r.currentText, after: r.proposedText, facts: r.businessFactIds.map((id) => facts.find((f) => f.id === id)?.label).filter(Boolean) as string[], note: r.dependency }))
+  return (
+    <ProposalShell id={`disc:${oppId}`} type="disc" title={`${loc.name} — help parents find your centre`} status={planStatus(plan.status)} round={plan.round}>
+      <FindingLine>
+        <span className="font-semibold">What we found:</span> not mentioned in {missed.length} relevant sampled recommendation{missed.length === 1 ? '' : 's'} — {missed.map((o) => `“${o.query}”`).join(', ')}. A discovery opportunity, not an AI error.
+      </FindingLine>
+      {applying ? <Applying onDone={() => setApplying(false)} /> : <FixPanel proposalKey={`disc:${oppId}`} kind="disc" locationId={opp.locationId} fixes={fixes} status={plan.status} taskIds={plan.taskIds} onApproved={() => setApplying(true)} />}
+      <div className="space-y-2">
+        <Disclosure title="Why ProManage recommends this">
+          <p className="whitespace-pre-line text-[13.5px] text-ink">{plan.summary}</p>
+          <p className="text-[13.5px] text-body"><span className="font-medium text-ink">Expected benefit (not guaranteed):</span> clearer, consistent information about the verified Montessori programme and services on sources you control. It can’t guarantee any AI assistant will mention the centre.</p>
+        </Disclosure>
+        <Disclosure title={`What ProManage checked · ${findings.filter((f) => f.certainty === 'confirmed_gap').length} confirmed gaps`}>
+          <ul className="space-y-1.5">
+            {findings.map((f) => (
+              <li key={f.id} className="text-[13.5px]">
+                <span className="font-medium text-ink">{f.surfaceLabel}</span> <span className="text-muted">({CATEGORY_LABEL[f.category]}, snapshot 14 Oct 2026)</span>: <span className="text-body">{f.observation}</span>{' '}
+                <Badge tone={f.certainty === 'confirmed_gap' ? 'warning' : f.certainty === 'no_gap' ? 'success' : 'neutral'}>{f.certainty === 'confirmed_gap' ? 'Confirmed information gap' : f.certainty === 'no_gap' ? 'No gap' : f.certainty === 'potential_gap' ? 'Possible gap' : 'Couldn’t check'}</Badge>
+              </li>
+            ))}
+          </ul>
+          <p className="rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-ink">
+            <span className="font-medium">Confirmed gaps vs. AI impact:</span> these gaps are real in the sources we inspected. Whether they caused the AI to leave you out is a hypothesis — we can’t prove it.
+          </p>
+        </Disclosure>
+        <TechnicalDetails locationId={opp.locationId} targets={targets} contentDiffs={plan.recommendations.filter((r) => r.channel !== 'structured_info').map((r) => ({ title: r.brandTitle, before: r.currentText, after: r.proposedText }))} />
+      </div>
+    </ProposalShell>
+  )
+}
+
+
 function ProposalShell({ id, type, title, status, round, children }: { id: string; type: 'disc' | 'acc'; title: string; status: string; round: number; children: React.ReactNode }) {
   return (
     <div id={id} className="scroll-mt-24">
@@ -273,83 +364,6 @@ function ProposalShell({ id, type, title, status, round, children }: { id: strin
         <div className="space-y-5 px-5 py-4">{children}</div>
       </Card>
     </div>
-  )
-}
-
-function Section({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-muted">
-        {n}. {title}
-      </p>
-      {children}
-    </div>
-  )
-}
-
-const planStatus = (s: string) => (s === 'awaiting_brand_approval' ? 'Awaiting your authorization' : s === 'approved' ? 'Authorized' : s === 'changes_requested' ? 'Changes requested' : s === 'declined' ? 'Declined' : 'Draft')
-
-function Outcome({ status, proposalKey, taskIds }: { status: string; proposalKey: string; taskIds: string[] }) {
-  const { reviseProposal } = useStore()
-  if (status === 'approved') return <Execution proposalKey={proposalKey} taskIds={taskIds} />
-  if (status === 'changes_requested')
-    return (
-      <div className="rounded-lg border border-brand-line bg-brand-soft px-4 py-3 text-[13.5px] text-ink">
-        ProManage is revising this proposal. Nothing was published.
-        <Button size="sm" className="ml-3" onClick={() => { reviseProposal(proposalKey); toast.success('Revised version ready for authorization (simulated)') }}>
-          See revised version
-        </Button>
-      </div>
-    )
-  if (status === 'declined') return <p className="rounded-lg border border-line bg-subtle px-4 py-3 text-[13.5px] text-body">You declined this proposal. Nothing was published.</p>
-  return null
-}
-
-function DiscoveryProposal({ oppId }: { oppId: string }) {
-  const { byId, record, findingsFor, observationsOf } = useDiscovery()
-  const [applying, setApplying] = useState(false)
-  const opp = byId[oppId]
-  const plan = record(oppId)?.plan
-  if (!opp || !plan) return null
-  const loc = LOCATION_BY_ID[opp.locationId]
-  const missed = observationsOf(opp).filter((o) => opp.targetPromptIds.includes(o.promptId))
-  const findings = findingsFor(opp)
-  const targets: Target[] = plan.recommendations.map((r) => ({ id: r.id, label: r.brandTitle, where: r.controlledSource, channel: r.channel }))
-  return (
-    <ProposalShell id={`disc:${oppId}`} type="disc" title={`${loc.name} — help parents find your centre`} status={planStatus(plan.status)} round={plan.round}>
-      <Section n={1} title="What we found">
-        <p className="text-[14px] text-ink">
-          Not mentioned in {missed.length} relevant sampled recommendation{missed.length === 1 ? '' : 's'}: {missed.map((o) => `“${o.query}”`).join(', ')}. A discovery opportunity — not an AI error.
-        </p>
-      </Section>
-      <Section n={2} title="What ProManage checked">
-        <ul className="space-y-1.5">
-          {findings.map((f) => (
-            <li key={f.id} className="text-[13.5px]">
-              <span className="font-medium text-ink">{f.surfaceLabel}</span> <span className="text-muted">({CATEGORY_LABEL[f.category]}, snapshot 14 Oct 2026)</span>: <span className="text-body">{f.observation}</span>{' '}
-              <Badge tone={f.certainty === 'confirmed_gap' ? 'warning' : f.certainty === 'no_gap' ? 'success' : 'neutral'}>{f.certainty === 'confirmed_gap' ? 'Confirmed information gap' : f.certainty === 'no_gap' ? 'No gap' : f.certainty === 'potential_gap' ? 'Possible gap' : 'Couldn’t check'}</Badge>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-ink">
-          <span className="font-medium">Confirmed gaps vs. AI impact:</span> these gaps are real in the sources we inspected. Whether they caused the AI to leave you out is a hypothesis — we can’t prove it.
-        </p>
-      </Section>
-      <Section n={3} title="What we recommend · what will change">
-        <p className="mb-2 whitespace-pre-line text-[14px] text-ink">{plan.summary}</p>
-        <div className="space-y-3">
-          {plan.recommendations.map((r) => (
-            <RecommendationCard key={r.id} rec={r} locationId={opp.locationId} brand />
-          ))}
-        </div>
-      </Section>
-      <Section n={4} title="Expected benefit (not guaranteed)">
-        <p className="text-[13.5px] text-body">Clearer, consistent information about the verified Montessori programme and services on sources you control. It can’t guarantee any AI assistant will mention the centre.</p>
-      </Section>
-      <TechnicalDetails locationId={opp.locationId} targets={targets} contentDiffs={plan.recommendations.filter((r) => r.channel !== 'structured_info').map((r) => ({ title: r.brandTitle, before: r.currentText, after: r.proposedText }))} />
-      {applying && <Applying onDone={() => setApplying(false)} />}
-      {plan.status === 'awaiting_brand_approval' ? <DecisionBar proposalKey={`disc:${oppId}`} targets={targets} locationId={opp.locationId} onApproved={() => setApplying(true)} /> : !applying && <Outcome status={plan.status} proposalKey={`disc:${oppId}`} taskIds={plan.taskIds} />}
-    </ProposalShell>
   )
 }
 
@@ -383,7 +397,7 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
   const verified = issue.field ? effectiveLocation(issue.locationId, factEdits).verifiedFields[issue.field].value : null
   const phrase = issue.field ? (FIELD_PHRASE[issue.field] ?? issue.field) : 'information'
   const sources = sourcesFor(issue.locationId)
-  // Before = the value seen at approval time when published; otherwise today's snapshot.
+  // Before = the value seen when it was published; otherwise today's snapshot.
   const valueOf = (taskChannel: string, sourceChannel: string) => {
     const task = tasks.find((t) => plan.taskIds.includes(t.id) && t.channel === taskChannel)
     const pub = task && publications.find((a) => a.taskId === task.id && a.before !== undefined)
@@ -398,58 +412,37 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
     before: it.kind === 'owned_website' ? valueOf('owned_website', 'owned_website') : it.kind === 'managed_listing' ? valueOf('managed_listing', 'managed_listing') : it.kind === 'external_request' ? valueOf('external_request', 'external_directory') : null,
     after: it.kind === 'structured_info' ? null : verified,
   }))
+  const fixes: Fix[] = targets.map((t) => ({ id: t.id, title: t.channel === 'structured_info' ? 'Technical information prepared by ProManage' : t.label, where: t.where, channel: t.channel, before: t.before, after: t.after, facts: issue.field && t.channel !== 'structured_info' ? [phrase] : undefined }))
   return (
     <ProposalShell id={`acc:${issue.id}`} type="acc" title={`${loc.name} — correct ${phrase}`} status={planStatus(plan.status)} round={plan.round}>
-      <Section n={1} title="What we found">
-        <p className="mb-2 text-[14px] text-ink">A different AI answer — “{obs?.query}” — gave {phrase} that don’t match your verified record.</p>
-        <FactComparison ai={claim?.value ?? '—'} record={verified ?? 'Not verified'} recordNote="Independently verified centre information" />
-      </Section>
-      <Section n={2} title="What ProManage checked">
-        <ul className="space-y-1 text-[13.5px]">
-          {sources.map((s) => (
-            <li key={s.id}>
-              <span className="font-medium text-ink">{s.label}</span> <span className="text-muted">({s.managedByCustomer ? 'connected' : 'independent'}, checked {fmtDate(s.observedAt)})</span>:{' '}
-              {s.inaccessible ? 'couldn’t be captured' : issue.field && s.values[issue.field] != null ? `shows “${s.values[issue.field]}”` : 'doesn’t state it'}
-              {issue.field && s.values[issue.field] != null && s.values[issue.field] !== verified && !s.inaccessible && <Badge tone="warning" className="ml-1.5">Outdated</Badge>}
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-ink">Outdated sources are confirmed; that they caused the AI answer is a hypothesis. This answer {obs?.citations.length ? `cited ${obs.citations.map((c) => c.title).join(', ')}` : 'cited no source'}.</p>
-      </Section>
-      <Section n={3} title="What we recommend · what will change">
-        <p className="mb-2 text-[14px] text-ink">{plan.why}</p>
-        <ul className="space-y-2">
-          {targets.map((t) => (
-            <li key={t.id} className="rounded-xl border border-line px-4 py-3">
-              <p className="text-[14px] font-semibold text-ink">{t.channel === 'structured_info' ? 'Technical information prepared by ProManage' : t.label}</p>
-              <p className="text-[12.5px] text-muted">{t.where}</p>
-              {t.channel === 'structured_info' ? (
-                <p className="mt-1 text-[13.5px] text-body">Search-readable information for the centre page, generated from your verified facts only.</p>
-              ) : (
-                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
-                  <div className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13.5px]">
-                    <p className="text-[12px] font-medium text-muted">Now</p>
-                    {t.before ?? 'Not stated'}
-                  </div>
-                  <div className="rounded-lg border border-[#bfeef3] bg-teal-soft/50 px-3 py-2 text-[13.5px] text-ink">
-                    <p className="text-[12px] font-medium text-teal-ink">{t.channel === 'external_request' ? 'We’ll request' : 'After'}</p>
-                    {t.after}
-                  </div>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Section>
-      <Section n={4} title="Expected benefit (not guaranteed)">
-        <p className="text-[13.5px] text-body">Sources you control will state the verified {phrase}. It can’t guarantee the next AI answer changes.</p>
-      </Section>
-      <TechnicalDetails locationId={issue.locationId} targets={targets} contentDiffs={targets.filter((t) => t.channel !== 'structured_info').map((t) => ({ title: t.label, before: t.before ?? undefined, after: t.after ?? undefined }))} />
-      {applying && <Applying onDone={() => setApplying(false)} />}
-      {plan.status === 'awaiting_brand_approval' ? <DecisionBar proposalKey={`acc:${issue.id}`} targets={targets} locationId={issue.locationId} onApproved={() => setApplying(true)} /> : !applying && <Outcome status={plan.status} proposalKey={`acc:${issue.id}`} taskIds={plan.taskIds} />}
+      <FindingLine>
+        <span className="font-semibold">What we found:</span> “{obs?.query}” — AI said <span className="font-semibold">“{claim?.value}”</span>; your verified record says <span className="font-semibold">“{verified ?? 'not verified'}”</span>.
+      </FindingLine>
+      {applying ? <Applying onDone={() => setApplying(false)} /> : <FixPanel proposalKey={`acc:${issue.id}`} kind="acc" locationId={issue.locationId} fixes={fixes} status={plan.status} taskIds={plan.taskIds} onApproved={() => setApplying(true)} />}
+      <div className="space-y-2">
+        <Disclosure title="Why ProManage recommends this">
+          <FactComparison ai={claim?.value ?? '—'} record={verified ?? 'Not verified'} recordNote="Independently verified centre information" />
+          <p className="text-[13.5px] text-ink">{plan.why}</p>
+          <p className="text-[13.5px] text-body"><span className="font-medium text-ink">Expected benefit (not guaranteed):</span> sources you control will state the verified {phrase}. It can’t guarantee the next AI answer changes.</p>
+        </Disclosure>
+        <Disclosure title={`What ProManage checked · ${sources.filter((s) => issue.field && !s.inaccessible && s.values[issue.field] != null && s.values[issue.field] !== verified).length} outdated sources`}>
+          <ul className="space-y-1 text-[13.5px]">
+            {sources.map((s) => (
+              <li key={s.id}>
+                <span className="font-medium text-ink">{s.label}</span> <span className="text-muted">({s.managedByCustomer ? 'connected' : 'independent'}, checked {fmtDate(s.observedAt)})</span>:{' '}
+                {s.inaccessible ? 'couldn’t be captured' : issue.field && s.values[issue.field] != null ? `shows “${s.values[issue.field]}”` : 'doesn’t state it'}
+                {issue.field && s.values[issue.field] != null && s.values[issue.field] !== verified && !s.inaccessible && <Badge tone="warning" className="ml-1.5">Outdated</Badge>}
+              </li>
+            ))}
+          </ul>
+          <p className="rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-ink">Outdated sources are confirmed; that they caused the AI answer is a hypothesis. This answer {obs?.citations.length ? `cited ${obs.citations.map((c) => c.title).join(', ')}` : 'cited no source'}.</p>
+        </Disclosure>
+        <TechnicalDetails locationId={issue.locationId} targets={targets} contentDiffs={targets.filter((t) => t.channel !== 'structured_info').map((t) => ({ title: t.label, before: t.before ?? undefined, after: t.after ?? undefined }))} />
+      </div>
     </ProposalShell>
   )
 }
+
 
 export default function ImprovePage() {
   const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal, publications } = useStore()

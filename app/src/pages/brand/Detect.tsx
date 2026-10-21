@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowRight, Compass, FileText, Loader2, MapPin, MessageSquareText, PlayCircle, ScanSearch, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowRight, Compass, FileText, Loader2, MapPin, MessageSquareText, PlayCircle, Plus, ScanSearch, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 import type { Observation } from '@/data/types'
-import { CATEGORY_LABELS, LOCATION_BY_ID, PILOT_IDS, fillPrompt } from '@/data/seed'
+import { CATEGORY_LABELS, LOCATION_BY_ID, LOCATIONS, PILOT_IDS, fillPrompt } from '@/data/seed'
 import { useStore } from '@/store/AppStore'
 import { useBrandViews, type BrandView } from '@/lib/brandStatus'
 import { useDiscovery } from '@/lib/useDiscovery'
@@ -32,15 +32,36 @@ const ACC_IDS = ['p6', 'p7', 'p8']
 
 /** Shown after the CTA: defaults are ready; changing questions or locations is optional. */
 function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel }: { open: boolean; onOpenChange: (o: boolean) => void; onStart: () => void; startLabel: string }) {
-  const { promptsById, detectLocationIds, setDetectLocations, detectPromptIds, setDetectPrompts } = useStore()
+  const { promptsById, customPrompts, saveCustomPrompt, deleteCustomPrompt, detectLocationIds, setDetectLocations, detectPromptIds, setDetectPrompts } = useStore()
+  const [newQ, setNewQ] = useState('')
+  const [qErr, setQErr] = useState<string>()
+  const [locQ, setLocQ] = useState('')
   const locs = detectLocationIds ?? PILOT_IDS
   const prompts = detectPromptIds ?? STANDARD_PROMPTS
   const [edit, setEdit] = useState<null | 'questions' | 'locations'>(null)
   const [tab, setTab] = useState<'disc' | 'acc'>('disc')
   const example = LOCATION_BY_ID.whitefield
   const toggle = (list: string[], id: string, on: boolean) => (on ? [...new Set([...list, id])] : list.filter((x) => x !== id))
-  const nDisc = prompts.filter((p) => DISC_IDS.includes(p)).length
-  const nAcc = prompts.filter((p) => ACC_IDS.includes(p)).length
+  const discIds = [...DISC_IDS, ...customPrompts.filter((p) => p.includeInDiscoveryMetric).map((p) => p.id)]
+  const accIds = [...ACC_IDS, ...customPrompts.filter((p) => !p.includeInDiscoveryMetric).map((p) => p.id)]
+  const nDisc = prompts.filter((p) => discIds.includes(p)).length
+  const nAcc = prompts.filter((p) => accIds.includes(p)).length
+  const nCustom = prompts.filter((p) => customPrompts.some((c) => c.id === p)).length
+  const extraLocs = locs.filter((id) => !PILOT_IDS.includes(id))
+  const locMatches = locQ.trim().length > 1 ? LOCATIONS.filter((l) => !locs.includes(l.id) && `${l.name} ${l.city}`.toLowerCase().includes(locQ.toLowerCase())).slice(0, 6) : []
+  const addQuestion = () => {
+    const text = newQ.trim()
+    if (text.length < 10) return setQErr('Write the question as a parent would ask it.')
+    if (tab === 'acc' && !/brightnest/i.test(text)) return setQErr('Accuracy questions should name BrightNest, e.g. “Does BrightNest Whitefield have parking?”')
+    // Asked for every selected centre: the example centre/city become placeholders.
+    const template = text.replace(/whitefield/gi, '{neighborhood}').replace(/bengaluru/gi, '{city}')
+    const id = `px${Date.now().toString(36)}`
+    saveCustomPrompt({ id, text: template, category: tab === 'disc' ? 'discovery' : 'branded', intent: tab === 'disc' ? 'unbranded_discovery' : 'branded_fact', includeInDiscoveryMetric: tab === 'disc', custom: true, provenance: 'Custom · added by the Brand' })
+    setDetectPrompts([...prompts, id])
+    setNewQ('')
+    setQErr(undefined)
+    toast.success('Question added', { description: template.includes('{neighborhood}') ? 'It will be asked for every selected centre.' : 'It will be asked as written for every selected centre.' })
+  }
   const valid = locs.length > 0 && nDisc > 0 && nAcc > 0
   const row = (title: string, summary: string, key: 'questions' | 'locations') => (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -74,7 +95,7 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel }: { open: 
       }
     >
       <div className="divide-y divide-line rounded-xl border border-line">
-        {row('Questions parents may ask', `${nDisc} discoverability (unbranded) · ${nAcc} information accuracy (branded) · curated by ProManage, not search-volume data`, 'questions')}
+        {row('Questions parents may ask', `${nDisc} discoverability (unbranded) · ${nAcc} information accuracy (branded)${nCustom ? ` · ${nCustom} your own` : ''} · curated by ProManage, not search-volume data`, 'questions')}
         {edit === 'questions' && (
           <div className="space-y-2 bg-subtle/60 px-4 py-3">
             <Segmented
@@ -88,21 +109,35 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel }: { open: 
               ]}
             />
             <ul className="space-y-1.5">
-              {(tab === 'disc' ? DISC_IDS : ACC_IDS).map((id) => {
+              {(tab === 'disc' ? discIds : accIds).map((id) => {
                 const p = promptsById[id]
+                if (!p) return null
                 return (
-                  <li key={id}>
-                    <label className="flex items-start gap-2.5 text-[14px] text-ink">
+                  <li key={id} className="flex items-start gap-2">
+                    <label className="flex flex-1 items-start gap-2.5 text-[14px] text-ink">
                       <Checkbox checked={prompts.includes(id)} onCheckedChange={(v) => setDetectPrompts(toggle(prompts, id, v))} aria-label={fillPrompt(p.text, example)} />
                       <span>
-                        “{fillPrompt(p.text, example)}{p.text.endsWith('?') ? '' : '?'}” <span className="text-[12px] text-muted">· {tab === 'disc' ? CATEGORY_LABELS[p.category] : 'Branded fact'}</span>
+                        “{fillPrompt(p.text, example)}{p.text.endsWith('?') ? '' : '?'}” <span className="text-[12px] text-muted">· {p.custom ? 'Your question' : tab === 'disc' ? CATEGORY_LABELS[p.category] : 'Branded fact'}</span>
                       </span>
                     </label>
+                    {p.custom && (
+                      <button className="rounded p-0.5 text-muted hover:bg-subtle hover:text-ink" aria-label={`Remove ${p.text}`} onClick={() => { deleteCustomPrompt(id); setDetectPrompts(prompts.filter((x) => x !== id)) }}>
+                        <X className="size-4" />
+                      </button>
+                    )}
                   </li>
                 )
               })}
             </ul>
-            <p className="text-[12px] text-muted">Shown for Whitefield; each question is asked for every selected centre. Keep at least one question in each group.</p>
+            <div className="flex flex-wrap items-start gap-2 pt-1">
+              <Input value={newQ} onChange={(e) => { setNewQ(e.target.value); setQErr(undefined) }} onKeyDown={(e) => e.key === 'Enter' && addQuestion()} placeholder={tab === 'disc' ? 'Add your own question, e.g. Preschools with transport near Whitefield' : 'Add your own question, e.g. Does BrightNest Whitefield have parking?'} aria-label="Add your own question" className="min-w-[240px] flex-1" />
+              <Button onClick={addQuestion}>
+                <Plus />
+                Add question
+              </Button>
+            </div>
+            {qErr && <p className="text-[12.5px] text-danger">{qErr}</p>}
+            <p className="text-[12px] text-muted">Shown for Whitefield; each question is asked for every selected centre (“Whitefield” becomes each centre’s area). Your own questions start as “needs relevance confirmation”. Keep at least one question in each group.</p>
           </div>
         )}
         {row('Locations', `${locs.length} of 150 centres · ${locs.length === PILOT_IDS.length && PILOT_IDS.every((x) => locs.includes(x)) ? 'Bengaluru pilot' : 'custom selection'}`, 'locations')}
@@ -124,6 +159,39 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel }: { open: 
                   <span className="text-[12px] text-muted">{LOCATION_BY_ID[id].region}</span>
                 </label>
               ))}
+            </div>
+            <div className="mt-3 border-t border-line pt-3">
+              <p className="mb-1.5 text-[13px] font-medium text-ink">Add another of your centres</p>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                <Input value={locQ} onChange={(e) => setLocQ(e.target.value)} placeholder="Search your 150 centres, e.g. Baner or Pune" className="pl-9" aria-label="Search centres to add" />
+              </div>
+              {locMatches.length > 0 && (
+                <ul className="mt-1 divide-y divide-line rounded-lg border border-line bg-surface">
+                  {locMatches.map((l) => (
+                    <li key={l.id}>
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13.5px] hover:bg-subtle" onClick={() => { setDetectLocations([...locs, l.id]); setLocQ(''); toast.success(`${l.name} added`) }}>
+                        <Plus className="size-4 text-brand" />
+                        <span className="flex-1 text-ink">{l.name}</span>
+                        <span className="text-[12px] text-muted">{l.city}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {locQ.trim().length > 1 && locMatches.length === 0 && <p className="mt-1 text-[12.5px] text-muted">No matching centre that isn’t already selected.</p>}
+              {extraLocs.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {extraLocs.map((id) => (
+                    <span key={id} className="inline-flex items-center gap-1 rounded-full border border-brand-line bg-brand-soft px-2 py-0.5 text-[12.5px] text-brand">
+                      {LOCATION_BY_ID[id].name}
+                      <button aria-label={`Remove ${LOCATION_BY_ID[id].name}`} onClick={() => setDetectLocations(locs.filter((x) => x !== id))}>
+                        <X className="size-3.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -387,7 +455,7 @@ export default function DetectPage() {
       setRunning({ pct: p.stage === 'complete' ? 100 : p.stage === 'running' ? 10 + (p.completed / p.total) * 75 : p.stage === 'extracting' ? 92 : 4, label: p.stage === 'extracting' ? 'Checking facts against your verified records…' : p.stage === 'running' ? `Sampling answers · ${p.completed} of ${p.total}` : 'Checking selected questions…', replay }),
     )
     if (!replay) {
-      createAudit({ name: 'Standard AI Visibility Check', locationIds: locs, promptIds: [...STANDARD_PROMPTS.filter((id) => prompts.includes(id))], mode: 'self-serve' })
+      createAudit({ name: 'Standard AI Visibility Check', locationIds: locs, promptIds: prompts, mode: 'self-serve' })
       toast.success('Your AI visibility findings are ready', { description: `${locs.length} centres checked (simulated).` })
     } else toast('Replay finished', { description: 'Showing the same saved check — not a new measurement.' })
     setRunning(null)
