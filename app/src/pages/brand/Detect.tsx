@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Compass, FileText, Loader2, MapPin, MessageSquareText, PlayCircle, ScanSearch, Search, ShieldCheck, X } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { ArrowRight, Compass, FileText, Loader2, MapPin, MessageSquareText, PlayCircle, ScanSearch, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 import type { Observation } from '@/data/types'
@@ -15,6 +15,7 @@ import { NotAnErrorNote, RelevanceControls } from '@/components/discovery'
 import { FocusOnQuestion } from '@/components/goals'
 import { KpiCard, PageHeader } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
+import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -26,85 +27,109 @@ import { cn, fmtDate } from '@/lib/utils'
 const STANDARD_PROMPTS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
 
-function Setup({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
-  const { promptsById } = useStore()
+const DISC_IDS = ['p1', 'p2', 'p3', 'p4', 'p5']
+const ACC_IDS = ['p6', 'p7', 'p8']
+
+/** Shown after the CTA: defaults are ready; changing questions or locations is optional. */
+function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel }: { open: boolean; onOpenChange: (o: boolean) => void; onStart: () => void; startLabel: string }) {
+  const { promptsById, detectLocationIds, setDetectLocations, detectPromptIds, setDetectPrompts } = useStore()
+  const locs = detectLocationIds ?? PILOT_IDS
+  const prompts = detectPromptIds ?? STANDARD_PROMPTS
+  const [edit, setEdit] = useState<null | 'questions' | 'locations'>(null)
   const [tab, setTab] = useState<'disc' | 'acc'>('disc')
   const example = LOCATION_BY_ID.whitefield
-  const ids = tab === 'disc' ? ['p1', 'p2', 'p3', 'p4', 'p5'] : ['p6', 'p7', 'p8']
+  const toggle = (list: string[], id: string, on: boolean) => (on ? [...new Set([...list, id])] : list.filter((x) => x !== id))
+  const nDisc = prompts.filter((p) => DISC_IDS.includes(p)).length
+  const nAcc = prompts.filter((p) => ACC_IDS.includes(p)).length
+  const valid = locs.length > 0 && nDisc > 0 && nAcc > 0
+  const row = (title: string, summary: string, key: 'questions' | 'locations') => (
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-semibold text-ink">{title}</p>
+        <p className="text-[13px] text-body">{summary}</p>
+      </div>
+      <Button size="sm" variant={edit === key ? 'secondary' : 'ghost'} onClick={() => setEdit(edit === key ? null : key)} aria-expanded={edit === key}>
+        {edit === key ? 'Done' : key === 'questions' ? 'Change questions' : 'Change locations'}
+      </Button>
+    </div>
+  )
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <Card>
-        <CardHeader
-          title="Questions parents may ask"
-          description="Suggested by ProManage for preschools in your locations — curated examples, not search-volume data. Shown for Whitefield; each is asked for every selected centre."
-          actions={
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="max-w-[720px]"
+      title="Your AI Visibility Check"
+      description="ProManage has set this up for you. Start now, or change the questions or locations first."
+      footer={
+        <>
+          <span className="mr-auto self-center text-[12.5px] text-muted">
+            {locs.length} centres × {prompts.length} questions · simulated
+          </span>
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="primary" disabled={!valid} onClick={onStart}>
+            <ScanSearch />
+            {startLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="divide-y divide-line rounded-xl border border-line">
+        {row('Questions parents may ask', `${nDisc} discoverability (unbranded) · ${nAcc} information accuracy (branded) · curated by ProManage, not search-volume data`, 'questions')}
+        {edit === 'questions' && (
+          <div className="space-y-2 bg-subtle/60 px-4 py-3">
             <Segmented
               ariaLabel="Question type"
               size="sm"
               value={tab}
               onChange={setTab}
               options={[
-                { value: 'disc', label: 'Being found (Discoverability) · 5' },
-                { value: 'acc', label: 'Information accuracy · 3' },
+                { value: 'disc', label: `Being found (Discoverability) · ${nDisc}` },
+                { value: 'acc', label: `Information accuracy · ${nAcc}` },
               ]}
             />
-          }
-        />
-        <Table>
-          <thead>
-            <tr>
-              <Th>Suggested question</Th>
-              <Th>Intent</Th>
-              <Th>What it checks</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {ids.map((id) => {
-              const p = promptsById[id]
-              return (
-                <Tr key={id}>
-                  <Td className="text-[14px] text-ink">“{fillPrompt(p.text, example)}{p.text.endsWith('?') ? '' : '?'}”</Td>
-                  <Td>
-                    <Badge tone={tab === 'disc' ? 'teal' : 'blue'}>{tab === 'disc' ? 'Unbranded' : 'Branded'}</Badge>
-                  </Td>
-                  <Td className="text-[13px] text-body">{tab === 'disc' ? `Is the centre recommended? · ${CATEGORY_LABELS[p.category]}` : 'Are the facts right?'}</Td>
-                </Tr>
-              )
-            })}
-          </tbody>
-        </Table>
-        <p className="border-t border-line px-5 py-2.5 text-[12.5px] text-muted">
-          {tab === 'disc' ? 'Being found (Discoverability): general questions that don’t name BrightNest.' : 'Information accuracy: questions about your centres, checked against your verified record.'} Switch groups with the tabs above.
-        </p>
-      </Card>
-      <Card id="locations" className="scroll-mt-24 self-start">
-        <CardHeader
-          title="Choose locations to check"
-          description={`${selected.length} of 150 centres · pilot of ${PILOT_IDS.length}`}
-          actions={
-            <div className="flex gap-1">
-              <Button size="sm" variant="ghost" onClick={() => onChange(PILOT_IDS)}>
+            <ul className="space-y-1.5">
+              {(tab === 'disc' ? DISC_IDS : ACC_IDS).map((id) => {
+                const p = promptsById[id]
+                return (
+                  <li key={id}>
+                    <label className="flex items-start gap-2.5 text-[14px] text-ink">
+                      <Checkbox checked={prompts.includes(id)} onCheckedChange={(v) => setDetectPrompts(toggle(prompts, id, v))} aria-label={fillPrompt(p.text, example)} />
+                      <span>
+                        “{fillPrompt(p.text, example)}{p.text.endsWith('?') ? '' : '?'}” <span className="text-[12px] text-muted">· {tab === 'disc' ? CATEGORY_LABELS[p.category] : 'Branded fact'}</span>
+                      </span>
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="text-[12px] text-muted">Shown for Whitefield; each question is asked for every selected centre. Keep at least one question in each group.</p>
+          </div>
+        )}
+        {row('Locations', `${locs.length} of 150 centres · ${locs.length === PILOT_IDS.length && PILOT_IDS.every((x) => locs.includes(x)) ? 'Bengaluru pilot' : 'custom selection'}`, 'locations')}
+        {edit === 'locations' && (
+          <div id="locations" className="bg-subtle/60 px-4 py-3">
+            <div className="mb-2 flex gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setDetectLocations(PILOT_IDS)}>
                 All pilot
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => onChange([])}>
+              <Button size="sm" variant="ghost" onClick={() => setDetectLocations([])}>
                 Clear
               </Button>
             </div>
-          }
-        />
-        <ul className="divide-y divide-line">
-          {PILOT_IDS.map((id) => (
-            <li key={id}>
-              <label className="flex items-center gap-2.5 px-5 py-2 text-[14px] text-ink hover:bg-subtle">
-                <Checkbox checked={selected.includes(id)} onCheckedChange={(v) => onChange(v ? [...selected, id] : selected.filter((x) => x !== id))} aria-label={LOCATION_BY_ID[id].name} />
-                <span className="flex-1">{LOCATION_BY_ID[id].neighborhood}</span>
-                <span className="text-[12px] text-muted">{LOCATION_BY_ID[id].region}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </div>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+              {PILOT_IDS.map((id) => (
+                <label key={id} className="flex items-center gap-2.5 text-[14px] text-ink">
+                  <Checkbox checked={locs.includes(id)} onCheckedChange={(v) => setDetectLocations(toggle(locs, id, v))} aria-label={LOCATION_BY_ID[id].name} />
+                  <span className="flex-1">{LOCATION_BY_ID[id].neighborhood}</span>
+                  <span className="text-[12px] text-muted">{LOCATION_BY_ID[id].region}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      {!valid && <p className="mt-2 text-[12.5px] text-danger">Choose at least one location and one question in each group.</p>}
+    </Dialog>
   )
 }
 
@@ -342,83 +367,107 @@ function Results() {
 }
 
 export default function DetectPage() {
-  const { latestAudit, audits, createAudit, detectLocationIds, setDetectLocations, openChapter } = useStore()
+  const { latestAudit, audits, createAudit, detectLocationIds, detectPromptIds, openChapter } = useStore()
   const [running, setRunning] = useState<{ pct: number; label: string; replay: boolean } | null>(null)
-  const [setupOpen, setSetupOpen] = useState(false)
-  const selected = detectLocationIds ?? PILOT_IDS
+  const [review, setReview] = useState(false)
+  const locs = detectLocationIds ?? PILOT_IDS
+  const prompts = detectPromptIds ?? STANDARD_PROMPTS
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => openChapter(1), [])
-  const matching = [...audits].reverse().find((a) => sameSet(a.locationIds, selected) && sameSet(a.promptIds, STANDARD_PROMPTS))
-  const showSetup = !latestAudit || setupOpen
+  const { hash } = useLocation()
+  useEffect(() => {
+    if (hash === '#locations') setReview(true)
+  }, [hash])
+  const matching = [...audits].reverse().find((a) => sameSet(a.locationIds, locs) && sameSet(a.promptIds, prompts))
 
   const run = async (replay: boolean) => {
+    setReview(false)
     setRunning({ pct: 2, label: 'Checking selected questions…', replay })
-    await runSimulatedAudit(selected.length * STANDARD_PROMPTS.length, (p) =>
+    await runSimulatedAudit(locs.length * prompts.length, (p) =>
       setRunning({ pct: p.stage === 'complete' ? 100 : p.stage === 'running' ? 10 + (p.completed / p.total) * 75 : p.stage === 'extracting' ? 92 : 4, label: p.stage === 'extracting' ? 'Checking facts against your verified records…' : p.stage === 'running' ? `Sampling answers · ${p.completed} of ${p.total}` : 'Checking selected questions…', replay }),
     )
     if (!replay) {
-      createAudit({ name: 'Standard AI Visibility Check', locationIds: selected, promptIds: STANDARD_PROMPTS, mode: 'self-serve' })
-      toast.success('Your AI visibility findings are ready', { description: `${selected.length} centres checked (simulated).` })
+      createAudit({ name: 'Standard AI Visibility Check', locationIds: locs, promptIds: [...STANDARD_PROMPTS.filter((id) => prompts.includes(id))], mode: 'self-serve' })
+      toast.success('Your AI visibility findings are ready', { description: `${locs.length} centres checked (simulated).` })
     } else toast('Replay finished', { description: 'Showing the same saved check — not a new measurement.' })
     setRunning(null)
-    setSetupOpen(false)
     setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' }), 50)
+  }
+
+  const start = () => {
+    if (matching && matching.id === latestAudit?.id) {
+      setReview(false)
+      toast('These centres and questions were already checked', { description: 'Showing your latest check. Use Replay demo to rerun the animation — it isn’t a new measurement.' })
+      return
+    }
+    run(false)
   }
 
   return (
     <div className="animate-fade-in space-y-6">
-      <PageHeader
-        title="Understand how AI search represents your locations."
-        subtitle="Run a ready-made check: are parents finding your centres in AI answers, and is the information correct?"
-        actions={
-          latestAudit && !setupOpen ? (
-            <Button onClick={() => setSetupOpen(true)}>
-              <ScanSearch />
-              Questions & locations
-            </Button>
-          ) : !latestAudit ? (
-            <Badge tone="neutral">Simulated prototype</Badge>
-          ) : undefined
-        }
-      />
-      {showSetup && (
-        <>
-          <Setup selected={selected} onChange={setDetectLocations} />
-          <Card className="flex flex-wrap items-center gap-3 p-5">
-            {running ? (
-              <div className="w-full">
-                <p className="flex items-center gap-2 text-[14px] text-ink">
-                  <Loader2 className="size-4 animate-spin text-brand" />
-                  {running.label} <Badge tone="neutral">{running.replay ? 'Replay — same saved results' : 'Simulated'}</Badge>
-                </p>
-                <Progress value={running.pct} className="mt-3 h-2" />
-              </div>
-            ) : matching ? (
-              <>
-                <Button variant="primary" size="lg" onClick={() => { setSetupOpen(false); setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' }), 50) }}>
-                  View latest check
-                </Button>
-                <Button size="lg" onClick={() => run(true)}>
-                  <PlayCircle />
-                  Replay demo
-                </Button>
-                <span className="text-[12.5px] text-muted">These centres were already checked on {fmtDate(matching.createdAt)}. A replay shows the same saved answers — it isn’t a new measurement.</span>
-              </>
-            ) : (
-              <>
-                <Button variant="primary" size="lg" disabled={!selected.length} onClick={() => run(false)}>
-                  <ScanSearch />
-                  Run AI Visibility Check
-                </Button>
-                <Badge tone="neutral">Simulated demo check</Badge>
-                <span className="text-[12.5px] text-muted">
-                  {selected.length} centres × {STANDARD_PROMPTS.length} questions · ProManage handles sampling, providers and matching — no setup needed.
-                </span>
-              </>
-            )}
-          </Card>
-        </>
+      {!latestAudit || running ? (
+        <Card className="overflow-hidden border-brand-line">
+          <div className="grid grid-cols-1 gap-6 bg-gradient-to-br from-[#eef4ff] via-white to-[#ecfbfd] px-6 py-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
+            <div>
+              <Badge tone="neutral">Simulated prototype</Badge>
+              <h1 className="mt-3 text-[28px] font-semibold leading-tight tracking-[-0.01em] text-ink">Understand how AI search represents your locations.</h1>
+              <p className="mt-2 max-w-[620px] text-[15px] text-body">One ready-made check shows where parents may not find your centres in AI answers, and where AI gets your information wrong.</p>
+              {running ? (
+                <div className="mt-6 max-w-[560px]">
+                  <p className="flex items-center gap-2 text-[14px] text-ink">
+                    <Loader2 className="size-4 animate-spin text-brand" />
+                    {running.label} <Badge tone="neutral">{running.replay ? 'Replay — same saved results' : 'Simulated'}</Badge>
+                  </p>
+                  <Progress value={running.pct} className="mt-3 h-2" />
+                </div>
+              ) : (
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <Button variant="primary" size="lg" className="h-12 px-6 text-[15.5px] shadow-pop" onClick={() => setReview(true)}>
+                    <ScanSearch />
+                    Run AI Visibility Check
+                  </Button>
+                  <span className="text-[13px] text-muted">
+                    {locs.length} pilot centres · {prompts.length} suggested questions · about a minute · simulated demo check
+                  </span>
+                </div>
+              )}
+            </div>
+            <ol className="grid grid-cols-1 gap-2 self-center">
+              {[
+                ['Being found', 'Are your centres recommended for general questions parents ask?'],
+                ['Information accuracy', 'Are hours, tours and contact details in AI answers correct?'],
+                ['No setup', 'ProManage picks the questions and handles sampling — change them if you want.'],
+              ].map(([t, d], i) => (
+                <li key={t} className="flex gap-3 rounded-lg border border-line bg-white/80 px-3 py-2.5">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand">{i + 1}</span>
+                  <span>
+                    <span className="block text-[13.5px] font-semibold text-ink">{t}</span>
+                    <span className="block text-[12.5px] text-body">{d}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </Card>
+      ) : (
+        <PageHeader
+          title="Understand how AI search represents your locations."
+          subtitle={`Latest standard check · ${latestAudit.locationIds.length} centres × ${latestAudit.promptIds.length} questions · ${fmtDate(latestAudit.createdAt)}`}
+          actions={
+            <>
+              <Button onClick={() => setReview(true)}>
+                <SlidersHorizontal />
+                Change questions or locations
+              </Button>
+              <Button onClick={() => run(true)}>
+                <PlayCircle />
+                Replay demo
+              </Button>
+            </>
+          }
+        />
       )}
+      <ReviewCheckDialog open={review} onOpenChange={setReview} onStart={start} startLabel={matching && matching.id === latestAudit?.id ? 'View latest check' : 'Start check'} />
       {latestAudit && !running && <Results />}
     </div>
   )

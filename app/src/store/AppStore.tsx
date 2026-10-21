@@ -45,6 +45,7 @@ interface PersistedState {
   goals: PrioritySearchGoal[]
   selectedGoalId: string | null
   detectLocationIds: string[] | null
+  detectPromptIds: string[] | null
   dispositions: Record<string, IssueDisposition>
   sourceUpdates: Record<string, SourceUpdate>
   investigations: Record<string, Investigation>
@@ -105,6 +106,7 @@ const initialState = (): PersistedState => ({
   goals: [SEEDED_GOAL],
   selectedGoalId: null,
   detectLocationIds: null,
+  detectPromptIds: null,
   dispositions: {},
   sourceUpdates: {},
   investigations: {},
@@ -202,6 +204,7 @@ interface Store extends PersistedState {
   approvePlan: (issueId: string, note?: string) => void
   openChapter: (c: DemoChapter) => void
   setDetectLocations: (ids: string[]) => void
+  setDetectPrompts: (ids: string[]) => void
   prepareImprovements: (auditId: string) => void
   authorizeProposal: (proposalKey: string, targetIds: string[], comment?: string) => void
   rejectProposal: (proposalKey: string, action: 'request_changes' | 'decline', comment: string) => void
@@ -433,6 +436,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }),
 
     setDetectLocations: (ids) => setState((s) => ({ ...s, detectLocationIds: ids })),
+    setDetectPrompts: (ids) => setState((s) => ({ ...s, detectPromptIds: ids })),
 
     // Simulated ProManage backend: investigate the standard check's findings and prepare evidence-backed proposals.
     prepareImprovements: (auditId) =>
