@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Brand tokens. #00C1D5 (teal) and #2A5EFE / #1545D7 (blue) were read from the
+  public promanage.ai stylesheets; everything else is a prototype approximation.
+*/
+:root {
+  --brand-teal: #00c1d5;
+  --teal-ink: #0b7f8c;
+  --teal-soft: #e5f8fa;
+  --brand-blue: #2a5efe;
+  --brand-blue-hover: #1545d7;
+  --blue-soft: #eef3ff;
+  --blue-line: #d4e0ff;
+  --ink: #16243a;
+  --body: #45546b;
+  --muted: #5f6d82;
+  --canvas: #f4f7fb;
+  --surface: #ffffff;
+  --border: #e3eaf1;
+  --subtle: #f8fafc;
+  --success: #16845d;
+  --success-soft: #e7f5ef;
+  --warning: #a86a12;
+  --warning-soft: #fdf4e3;
+  --danger: #c43d4b;
+  --danger-soft: #fcecee;
+
+  --chart-1: #2a5efe;
+  --chart-2: #0fa3b1;
+  --chart-grid: #e9eef4;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-canvas font-sans text-[14px] leading-[1.5] text-body;
+    font-feature-settings: 'cv11', 'ss01', 'tnum' 0;
+  }
+  h1, h2, h3, h4 {
+    @apply text-ink;
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand-blue);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection {
+    background: var(--blue-line);
+  }
+}
+
+@layer components {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d5dde7 transparent;
+  }
+  .claim-mark {
+    @apply rounded-[4px] px-0.5 py-px;
+    box-decoration-break: clone;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+  .print-full {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  [data-sonner-toaster],
+  [aria-label='Presenter controls'] {
+    display: none !important;
+  }
+  .shadow-card,
+  .shadow-pop {
+    box-shadow: none !important;
+  }
+  .rounded-xl {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 14mm;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
