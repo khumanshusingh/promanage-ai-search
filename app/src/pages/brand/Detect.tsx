@@ -493,8 +493,7 @@ export default function DetectPage() {
         <Card className="overflow-hidden border-brand-line">
           <div className="grid grid-cols-1 gap-6 bg-gradient-to-br from-[#eef4ff] via-white to-[#ecfbfd] px-6 py-7 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
             <div>
-              <Badge tone="neutral">Simulated prototype</Badge>
-              <h1 className="mt-3 text-[28px] font-semibold leading-tight tracking-[-0.01em] text-ink">Understand how AI search represents your locations.</h1>
+              <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.01em] text-ink">Understand how AI search represents your locations.</h1>
               <p className="mt-2 max-w-[620px] text-[15px] text-body">One ready-made check shows where parents may not find your centres in AI answers, and where AI gets your information wrong.</p>
               {running ? (
                 <div className="mt-6 max-w-[560px]">
