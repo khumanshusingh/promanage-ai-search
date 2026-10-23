@@ -56,7 +56,7 @@ export default function BrandOverview() {
   if (!latestAudit) {
     return (
       <div className="animate-fade-in">
-        <PageHeader title="Your AI Search Overview" subtitle="See how your locations appear in sampled AI answers and what needs your attention." />
+        <PageHeader title="Your AI Visibility Overview" subtitle="See how your locations appear in sampled AI answers and what needs your attention." />
         <Card className="p-8">
           <div className="max-w-xl">
             <h2 className="text-[20px] font-semibold text-ink">No AI visibility check has been run yet.</h2>
@@ -104,7 +104,7 @@ export default function BrandOverview() {
   return (
     <div className="animate-fade-in">
       <PageHeader
-        title="Your AI Search Overview"
+        title="Your AI Visibility Overview"
         subtitle="See how your locations appear in sampled AI answers and what needs your attention."
         actions={
           <Button asChild>

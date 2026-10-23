@@ -45,7 +45,7 @@ export default function BrandAuditResults() {
             Overview
           </Link>
         }
-        title="Your AI Search Check"
+        title="Your AI Visibility Check"
         subtitle={`Results from selected locations and questions — not all customer AI conversations. Checked ${fmtDate(audit.createdAt)}.`}
         actions={
           <>

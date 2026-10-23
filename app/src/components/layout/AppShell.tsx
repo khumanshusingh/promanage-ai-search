@@ -56,7 +56,7 @@ const PRODUCTS = [
   { name: 'Marvel AI', tagline: 'Get more reviews, more easily', icon: <Star /> },
 ]
 
-/** AI Search ships as a module inside Monitor AI; sibling products are listed but not part of this demo. */
+/** AI Visibility ships as a module inside Monitor AI; sibling products are listed but not part of this demo. */
 function ProductSwitcher() {
   return (
     <DM.Root>
@@ -116,7 +116,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </span>
         </div>
         <p className="mt-4 flex items-center gap-2 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8a97a9]">
-          AI Search
+          AI Visibility
           <span className="rounded-full bg-brand-soft px-1.5 py-px text-[10px] font-semibold normal-case tracking-normal text-brand">New</span>
           {!brand && <span className="ml-auto text-[10.5px] font-medium normal-case tracking-normal">Ops</span>}
         </p>
@@ -124,7 +124,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       {brand ? (
         <ChapterNav onNavigate={onNavigate} awaiting={counts['/attention']} />
       ) : (
-      <nav className="flex-1 space-y-0.5 px-3" aria-label="AI Search">
+      <nav className="flex-1 space-y-0.5 px-3" aria-label="AI Visibility">
         {NAV.map((item) => {
           const locked = item.release && !hasRelease(item.release)
           return (
@@ -171,7 +171,7 @@ const CHAPTERS: { to: string; n: DemoChapter; label: string; tag: Release; icon:
 function ChapterNav({ onNavigate, awaiting }: { onNavigate?: () => void; awaiting?: number }) {
   const { hasRelease } = useStore()
   return (
-    <nav className="flex-1 space-y-1 px-3" aria-label="AI Search chapters">
+    <nav className="flex-1 space-y-1 px-3" aria-label="AI Visibility chapters">
       {CHAPTERS.map((c) => {
         const unlocked = hasRelease(c.tag)
         return (
