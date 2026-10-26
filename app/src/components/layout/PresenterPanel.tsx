@@ -114,6 +114,23 @@ export function PresenterPanel() {
             Reset demo
           </Button>
         </div>
+        <p className="mt-2 text-[12px] text-muted">
+          Fresh-start link for demos (a normal refresh keeps progress):{' '}
+          <button
+            className="font-medium text-brand hover:underline"
+            onClick={async () => {
+              const link = `${window.location.origin}${import.meta.env.BASE_URL}?reset`
+              try {
+                await navigator.clipboard.writeText(link)
+                toast.success('Reset link copied', { description: link })
+              } catch {
+                toast(link)
+              }
+            }}
+          >
+            copy reset link
+          </button>
+        </p>
       </div>
       <Dialog
         open={confirmReset}

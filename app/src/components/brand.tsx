@@ -99,7 +99,7 @@ export function FactComparison({ ai, record, recordNote }: { ai: ReactNode; reco
 }
 
 /** Progressive disclosure for the full sampled answer — keeps evidence, timestamp and limits close to the answer. */
-export function EvidenceDisclosure({ obs, title = 'See original AI answer & evidence', later }: { obs: Observation; title?: string; later?: Observation }) {
+export function EvidenceDisclosure({ obs, title = 'See original AI answer & evidence', later }: { obs: Observation; title?: ReactNode; later?: Observation }) {
   const [open, setOpen] = useState(false)
   const loc = LOCATION_BY_ID[obs.locationId]
   const brandName = `BrightNest Preschool – ${loc.neighborhood}`

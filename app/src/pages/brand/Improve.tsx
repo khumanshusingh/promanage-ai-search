@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Issue, Task } from '@/data/types'
+import type { ActionDelivery, EvidenceBasis, GeoGroup, GeoPreview, Issue, Task } from '@/data/types'
 import { LOCATION_BY_ID } from '@/data/seed'
 import { parseOpp, useStore } from '@/store/AppStore'
 import { useDiscovery } from '@/lib/useDiscovery'
 import { buildFacts, effectiveLocation } from '@/lib/facts'
 import { buildFactSheet, buildJsonLd, copyText, downloadText, factSheetText, serializeJsonLd } from '@/lib/geoMarkup'
 import { aggregate, AGGREGATE_LABEL, PERMISSION_LABEL, STATE_LABEL, targetPermission } from '@/lib/publishing'
-import { CATEGORY_LABEL } from '@/lib/discovery'
-import { FIELD_PHRASE } from '@/lib/brandStatus'
+import { CATEGORY_LABEL, discoveryId } from '@/lib/discovery'
+import { FIELD_PHRASE, useBrandViews } from '@/lib/brandStatus'
 import { FactComparison } from '@/components/brand'
 import { KpiCard, NextStep, PageHeader, PermButton } from '@/components/domain'
 import { Card, CardHeader } from '@/components/ui/card'
@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog } from '@/components/ui/dialog'
-import { FieldError, Textarea } from '@/components/ui/input'
+import { FieldError, Select, Textarea } from '@/components/ui/input'
 import { EmptyState, Progress, Segmented } from '@/components/ui/misc'
 import { cn, fmtDate, fmtDateTime } from '@/lib/utils'
 
@@ -135,6 +135,168 @@ interface Fix {
   after?: string | null
   facts?: string[]
   note?: string
+  group?: GeoGroup
+  technique?: string
+  why?: string
+  basedOn?: string[]
+  preview?: GeoPreview
+  evidence?: EvidenceBasis
+  evidenceText?: string
+  priority?: 'high' | 'medium' | 'low'
+  priorityReason?: string
+  delivery?: ActionDelivery
+  limitation?: string
+}
+
+const EVIDENCE_LABEL: Record<EvidenceBasis, { label: string; tone: 'warning' | 'danger' | 'neutral' }> = {
+  confirmed_gap: { label: 'Confirmed missing information', tone: 'warning' },
+  confirmed_conflict: { label: 'Confirmed source mismatch', tone: 'danger' },
+  hypothesis_to_test: { label: 'Possible factor to test', tone: 'neutral' },
+}
+const PRIORITY_LABEL = { high: 'High priority', medium: 'Medium priority', low: 'Low priority' } as const
+const DELIVERY_LABEL: Record<ActionDelivery, string> = {
+  connected_publish: 'Published by ProManage to this source after your approval',
+  site_admin_handoff: 'Handed to your site admin; ProManage never changes it automatically',
+  external_request_draft: 'Request draft for an independent site; nothing is sent from this prototype',
+  advisory_only: 'Advice only: a draft for later, not published by this proposal',
+}
+
+/** How fixes are grouped for the Brand, in the order they're shown. */
+const GEO_GROUPS: { key: GeoGroup; label: string; hint: string }[] = [
+  { key: 'information', label: 'Fix missing or outdated information', hint: 'Every source ProManage manages states the same verified facts.' },
+  { key: 'content', label: 'Write content AI can quote', hint: 'Answer parents’ questions directly, in the words they use with AI assistants.' },
+  { key: 'trust', label: 'Add trust signals', hint: 'Show the information is current, sourced and genuine.' },
+  { key: 'technical', label: 'Strengthen the technical foundation', hint: 'Help AI systems find, read and understand the page.' },
+  { key: 'offsite', label: 'Ask other sites to update', hint: 'ProManage drafts a request with the verified facts. You approve the draft; nothing is sent automatically.' },
+]
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 } as const
+const groupOf = (f: Fix): GeoGroup => f.group ?? (f.channel === 'external_request' ? 'offsite' : f.channel === 'structured_info' ? 'technical' : 'information')
+const INTENT_TONE = { Learn: 'neutral', Compare: 'blue', Decide: 'teal' } as const
+
+/** Rich, read-only preview of a GEO draft. */
+function GeoPreviewView({ preview, sent }: { preview: GeoPreview; sent?: boolean }) {
+  const [all, setAll] = useState(false)
+  if (preview.kind === 'qa') {
+    const shown = all ? preview.items : preview.items.slice(0, 3)
+    return (
+      <div className="mt-2 rounded-lg bg-teal-soft/50 px-3 py-2.5">
+        <p className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-teal-ink">Proposed Q&A · {preview.items.length} questions</p>
+        <ul className="space-y-2">
+          {shown.map((i) => (
+            <li key={i.q}>
+              <p className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-semibold text-ink">
+                {i.q} <Badge tone={INTENT_TONE[i.intent]}>{i.intent}</Badge>
+              </p>
+              <p className="text-[13.5px] text-body">{i.a}</p>
+            </li>
+          ))}
+        </ul>
+        {preview.items.length > 3 && (
+          <button className="mt-1.5 text-[12.5px] font-medium text-brand hover:underline" onClick={() => setAll(!all)}>
+            {all ? 'Show fewer' : `Show all ${preview.items.length} questions`}
+          </button>
+        )}
+      </div>
+    )
+  }
+  if (preview.kind === 'facts')
+    return (
+      <div className="mt-2 rounded-lg bg-teal-soft/50 px-3 py-2.5">
+        <p className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-teal-ink">Key facts box</p>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13.5px]">
+          {preview.rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-medium text-ink">{k}</dt>
+              <dd className="text-body">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    )
+  if (preview.kind === 'outline')
+    return (
+      <div className="mt-2 rounded-lg bg-teal-soft/50 px-3 py-2.5">
+        <p className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-teal-ink">Proposed page outline</p>
+        <ul className="space-y-0.5 text-[13.5px]">
+          {preview.lines.map((l, i) => (
+            <li key={i} className={cn('flex items-baseline gap-2', l.level === 2 && 'pl-4', l.level === 3 && 'pl-8')}>
+              <span className="w-6 shrink-0 font-mono text-[11px] text-muted">H{l.level}</span>
+              <span className={cn(l.level === 1 ? 'font-semibold text-ink' : l.level === 2 ? 'font-medium text-ink' : 'text-body')}>{l.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  if (preview.kind === 'code')
+    return (
+      <div className="mt-2">
+        <p className="mb-1 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-muted">{preview.language} · read-only, generated from verified facts</p>
+        <pre className="scrollbar-thin max-h-48 overflow-auto rounded-lg border border-line bg-[#0f1b2d] px-3 py-2 text-[11.5px] leading-relaxed text-[#d7e3f4]" tabIndex={0}>
+          {preview.code}
+        </pre>
+      </div>
+    )
+  if (preview.kind === 'article')
+    return (
+      <div className="mt-2 rounded-lg border border-dashed border-line bg-subtle/60 px-3 py-2.5">
+        <p className="mb-1 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-muted">Draft guide · not published by this proposal</p>
+        <p className="text-[14px] font-semibold text-ink">{preview.title}</p>
+        <div className="mt-1.5 space-y-1.5">
+          {preview.sections.map((sec) => (
+            <div key={sec.heading}>
+              <p className="text-[13px] font-medium text-ink">{sec.heading}</p>
+              <p className="text-[13px] text-body">{sec.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  const steps = [
+    { text: 'Draft prepared by ProManage', done: true },
+    { text: 'Approved by you', done: !!sent },
+    { text: 'Handed off to ProManage to confirm the recipient', done: !!sent },
+    { text: 'Request sent: only with a real, authorized send integration (not in this prototype)', done: false },
+    { text: 'Directory updated: only once ProManage verifies the change', done: false },
+  ]
+  const full = `To: ${preview.to ?? 'Recipient not yet confirmed'}\nSubject: ${preview.subject}\n\n${preview.body}`
+  return (
+    <div className="mt-2 rounded-lg border border-line bg-surface">
+      <div className="space-y-0.5 border-b border-line px-3 py-2 text-[12.5px]">
+        <p>
+          <span className="text-muted">To:</span> {preview.to ? <span className="text-ink">{preview.to}</span> : <span className="text-warning">Recipient not yet confirmed. ProManage confirms the directory’s contact before anything is sent; no address is guessed.</span>}
+        </p>
+        {preview.sourceUrl && (
+          <p>
+            <span className="text-muted">Listing:</span> <span className="text-ink">{preview.sourceUrl}</span>
+          </p>
+        )}
+        <p>
+          <span className="text-muted">Subject:</span> <span className="font-medium text-ink">{preview.subject}</span>
+        </p>
+      </div>
+      <div className="px-3 py-2">
+        <Clamp text={preview.body} />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" onClick={async () => { await copyText(full); toast.success('Request draft copied') }}>
+            <Copy />
+            Copy email
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => downloadText('directory-request-draft.txt', full, 'text/plain')}>
+            <Download />
+            Download draft
+          </Button>
+        </div>
+      </div>
+      <ol className="space-y-1 border-t border-line px-3 py-2 text-[12.5px]">
+        {steps.map((st) => (
+          <li key={st.text} className="flex items-start gap-2">
+            {st.done ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" /> : <span className="mt-[5px] size-2 shrink-0 rounded-full border border-muted" />}
+            <span className={st.done ? 'text-ink' : 'text-muted'}>{st.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
 }
 
 /** Which task carries a fix after approval (structured data is published with the website task). */
@@ -160,9 +322,16 @@ function Clamp({ text }: { text: string }) {
 }
 
 /** The actionable heart of a proposal: selectable fix cards + one authorize bar, or per-target results after approval. */
-function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApproved }: { proposalKey: string; kind: 'disc' | 'acc'; locationId: string; fixes: Fix[]; status: string; taskIds: string[]; onApproved: () => void }) {
-  const { authorizeProposal, rejectProposal, reviseProposal, tasks, publications, retryPublication } = useStore()
-  const [picked, setPicked] = useState<string[]>(fixes.map((f) => f.id))
+const deliveryOf = (f: Fix, permission: string): ActionDelivery => f.delivery ?? (permission === 'third_party_unmanaged' ? 'external_request_draft' : permission === 'requires_site_admin' ? 'site_admin_handoff' : 'connected_publish')
+
+function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApproved, round = 1 }: { proposalKey: string; kind: 'disc' | 'acc'; locationId: string; fixes: Fix[]; status: string; taskIds: string[]; onApproved: () => void; round?: number }) {
+  const versionLabel = `r${round}`
+  const logPreview = (f: Fix) => logEvent(`action_preview_opened · ${f.title} · ${proposalKey}`)
+  const { authorizeProposal, rejectProposal, reviseProposal, tasks, publications, retryPublication, logEvent } = useStore()
+  const selectable = (f: Fix) => f.delivery !== 'advisory_only'
+  const [picked, setPicked] = useState<string[]>(fixes.filter(selectable).map((f) => f.id))
+  const [openEvidence, setOpenEvidence] = useState<string | null>(null)
+  const { role } = useStore()
   const [dlg, setDlg] = useState<null | 'approve' | 'request_changes' | 'decline'>(null)
   const [text, setText] = useState('')
   const [err, setErr] = useState<string>()
@@ -176,7 +345,7 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
       <div className="flex flex-wrap items-center gap-3 border-b border-brand-line px-4 py-3">
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-semibold text-ink">
-            {fixes.length} recommended fix{fixes.length === 1 ? '' : 'es'}
+            {fixes.length} recommended change{fixes.length === 1 ? '' : 's'}
           </p>
           <p className="text-[12.5px] text-body">
             {approved ? AGGREGATE_LABEL[agg] : awaiting ? `${picked.length} selected · ${auto} publish automatically after approval · ${picked.length - auto} need follow-up` : status === 'declined' ? 'You declined these fixes. Nothing was published.' : 'ProManage is revising these fixes. Nothing was published.'}
@@ -186,7 +355,7 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
           <div className="flex flex-wrap gap-2">
             <PermButton perm="approvePlan" variant="primary" disabled={!picked.length} onClick={() => { setText(''); setDlg('approve') }}>
               <ShieldCheck />
-              Approve & authorize ({picked.length})
+              Approve & authorize selected ({picked.length})
             </PermButton>
             <PermButton perm="approvePlan" onClick={() => { setText(''); setErr(undefined); setDlg('request_changes') }}>
               Request changes
@@ -203,8 +372,19 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
         )}
         {approved && <Badge tone="neutral">Demo: simulated publication</Badge>}
       </div>
-      <ul className="space-y-2.5 p-3">
-        {fixes.map((f) => {
+      <div className="space-y-4 p-3">
+        {GEO_GROUPS.filter((g) => fixes.some((f) => groupOf(f) === g.key)).map((g) => (
+          <section key={g.key} aria-label={g.label}>
+            {new Set(fixes.map(groupOf)).size > 1 && (
+              <div className="mb-2 px-1">
+                <p className="text-[13px] font-semibold uppercase tracking-[0.04em] text-ink">
+                  {g.label} <span className="font-normal normal-case tracking-normal text-muted">· {fixes.filter((f) => groupOf(f) === g.key).length}</span>
+                </p>
+                <p className="text-[12.5px] text-muted">{g.hint}</p>
+              </div>
+            )}
+      <ul className="space-y-2.5">
+        {fixes.filter((f) => groupOf(f) === g.key).sort((a, b) => PRIORITY_RANK[a.priority ?? 'medium'] - PRIORITY_RANK[b.priority ?? 'medium']).map((f) => {
           const pm = perm(f)
           const t = approved ? taskForFix(f, taskIds, tasks, kind) : undefined
           const last = t ? publications.filter((a) => a.taskId === t.id).pop() : undefined
@@ -213,14 +393,26 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
           return (
             <li key={f.id} className={cn('rounded-xl border bg-surface px-4 py-3 shadow-card', awaiting && on ? 'border-brand' : 'border-line')}>
               <div className="flex items-start gap-3">
-                {awaiting && <Checkbox checked={on} onCheckedChange={(v) => setPicked((p) => (v ? [...p, f.id] : p.filter((x) => x !== f.id)))} aria-label={`Authorize ${f.title}`} className="mt-0.5" />}
+                {awaiting && (selectable(f) ? <Checkbox checked={on} onCheckedChange={(v) => setPicked((p) => (v ? [...p, f.id] : p.filter((x) => x !== f.id)))} aria-label={`Authorize ${f.title}`} className="mt-0.5" /> : <span className="mt-0.5 size-4 shrink-0" aria-hidden />)}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-[15px] font-semibold text-ink">{f.title}</p>
                     {st ? <Badge tone={st.tone}>{st.label}</Badge> : <Badge tone={pm.permission === 'connected_authorized' ? 'success' : 'warning'} className="max-w-full whitespace-normal">{PERMISSION_LABEL[pm.permission]}</Badge>}
                   </div>
                   <p className="mt-0.5 text-[12.5px] text-muted">{f.where}</p>
-                  {f.channel === 'structured_info' ? (
+                  <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12.5px] text-body">
+                    {f.priority && <Badge tone={f.priority === 'high' ? 'danger' : f.priority === 'medium' ? 'warning' : 'neutral'}>{PRIORITY_LABEL[f.priority]}</Badge>}
+                    {f.evidence && <Badge tone={EVIDENCE_LABEL[f.evidence].tone}>{EVIDENCE_LABEL[f.evidence].label}</Badge>}
+                    {f.technique && <Badge tone="blue">{f.technique}</Badge>}
+                  </p>
+                  {f.priorityReason && <p className="mt-1 text-[12px] text-muted">Why first: {f.priorityReason}</p>}
+                  {f.basedOn?.length ? <p className="mt-1 text-[12.5px] text-body">Answers: {f.basedOn.map((q) => `“${q}”`).join(' · ')}</p> : null}
+                  {f.preview ? (
+                    <>
+                      {f.before && f.preview.kind !== 'email' && <p className="mt-2 text-[12.5px] text-muted">Now: {f.before}</p>}
+                      <GeoPreviewView preview={f.preview} sent={approved && !!last} />
+                    </>
+                  ) : f.channel === 'structured_info' ? (
                     <p className="mt-2 text-[13.5px] text-body">Search-readable information for the centre page, generated from your verified facts. Preview it in Technical details below.</p>
                   ) : f.after ? (
                     <div className="mt-2 grid grid-cols-1 items-stretch gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
@@ -237,7 +429,29 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
                   ) : (
                     <p className="mt-2 text-[13.5px] text-body">No wording change — a check for the site owner to confirm.</p>
                   )}
+                  {f.why && (
+                    <p className="mt-2 text-[12.5px] text-body">
+                      <span className="font-medium text-ink">Why this helps AI:</span> {f.why}
+                    </p>
+                  )}
                   {f.facts && f.facts.length > 0 && <p className="mt-1.5 text-[12px] text-muted">Uses your verified facts: {f.facts.join(' · ')}</p>}
+                  <p className="mt-1 text-[12px] text-muted">
+                    <span className="font-medium text-body">Delivery:</span> {DELIVERY_LABEL[deliveryOf(f, pm.permission)]} · Prepared by ProManage
+                  </p>
+                  {(f.evidenceText || f.limitation) && (
+                    <div className="mt-1.5">
+                      <button className="text-[12.5px] font-medium text-brand hover:underline" onClick={() => { setOpenEvidence(openEvidence === f.id ? null : f.id); if (openEvidence !== f.id) logPreview(f) }} aria-expanded={openEvidence === f.id}>
+                        {openEvidence === f.id ? 'Hide evidence & limitations' : 'Evidence & limitations'}
+                      </button>
+                      {openEvidence === f.id && (
+                        <div className="mt-1 space-y-1 rounded-lg bg-subtle px-3 py-2 text-[12.5px] text-body">
+                          {f.evidenceText && <p><span className="font-medium text-ink">Evidence:</span> {f.evidenceText}</p>}
+                          {f.limitation && <p><span className="font-medium text-ink">Limitations:</span> {f.limitation}</p>}
+                          <p>Possible explanation only; not confirmed as the cause of the AI answer.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {f.note && <p className="mt-1 text-[12px] text-warning">{f.note}</p>}
                   {last && <p className="mt-1.5 text-[12.5px] text-body">{last.detail}</p>}
                   {last?.state === 'failed' && t && (
@@ -252,6 +466,9 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
           )
         })}
       </ul>
+          </section>
+        ))}
+      </div>
       {approved && (
         <div className="flex flex-wrap items-center gap-3 border-t border-brand-line px-4 py-2.5">
           <p className="min-w-0 flex-1 text-[12.5px] text-muted">Recorded AI answers are unchanged. A source update doesn’t mean any AI answer has changed — that’s measured in 03 Measure.</p>
@@ -267,7 +484,7 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
         open={!!dlg}
         onOpenChange={(o) => !o && setDlg(null)}
         title={dlg === 'approve' ? 'Here is exactly what will change' : dlg === 'request_changes' ? 'Request changes' : 'Decline these changes?'}
-        description={dlg === 'approve' ? `You authorize ${picked.length} selected fix${picked.length === 1 ? '' : 'es'} for this version. ProManage applies them to connected sources it’s permitted to update (simulated); anything else becomes a follow-up.` : dlg === 'request_changes' ? 'Nothing is published. ProManage revises and asks for a new authorization.' : 'Nothing is published.'}
+        description={dlg === 'approve' ? `You authorize ${picked.length} selected change${picked.length === 1 ? '' : 's'} for this version. ProManage applies them to connected sources it’s permitted to update (simulated); anything else becomes a follow-up.` : dlg === 'request_changes' ? 'Nothing is published. ProManage revises and asks for a new authorization.' : 'Nothing is published.'}
         footer={
           <>
             <Button onClick={() => setDlg(null)}>Cancel</Button>
@@ -291,15 +508,21 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
         }
       >
         {dlg === 'approve' ? (
-          <ul className="list-disc space-y-1 pl-5 text-[13.5px] text-ink">
-            {fixes
-              .filter((f) => picked.includes(f.id))
-              .map((f) => (
-                <li key={f.id}>
-                  {f.title} <span className="text-muted">· {f.where}</span>
-                </li>
-              ))}
-          </ul>
+          <div className="space-y-3">
+            <ul className="list-disc space-y-1 pl-5 text-[13.5px] text-ink">
+              {fixes
+                .filter((f) => picked.includes(f.id))
+                .map((f) => (
+                  <li key={f.id}>
+                    {f.title} <span className="text-muted">· {f.where} · {DELIVERY_LABEL[deliveryOf(f, perm(f).permission)].split(';')[0]}</span>
+                  </li>
+                ))}
+            </ul>
+            <p className="rounded-lg bg-subtle px-3 py-2 text-[12.5px] text-body">
+              Version {versionLabel} · authorized by {role === 'brand' ? 'Ananya Iyer (Brand)' : 'ProManage on behalf of the Brand'} · {picked.length} selected change{picked.length === 1 ? '' : 's'}
+              {fixes.length - picked.length > 0 ? ` · ${fixes.length - picked.length} not selected (not published)` : ''}. You authorize only these exact versions and destinations. Independent sites and site-admin settings are never changed automatically; if a fact or permission changes, a new version needs a new approval.
+            </p>
+          </div>
         ) : (
           <>
             <Textarea value={text} onChange={(e) => { setText(e.target.value); setErr(undefined) }} placeholder={dlg === 'request_changes' ? 'e.g. Please don’t mention the daycare hours on this page.' : 'Reason'} aria-label="Comment" />
@@ -329,13 +552,13 @@ function DiscoveryProposal({ oppId }: { oppId: string }) {
   const findings = findingsFor(opp)
   const facts = buildFacts(opp.locationId, factEdits)
   const targets: Target[] = plan.recommendations.map((r) => ({ id: r.id, label: r.brandTitle, where: r.controlledSource, channel: r.channel }))
-  const fixes: Fix[] = plan.recommendations.map((r) => ({ id: r.id, title: r.brandTitle, where: r.controlledSource, channel: r.channel, before: r.currentText, after: r.proposedText, facts: r.businessFactIds.map((id) => facts.find((f) => f.id === id)?.label).filter(Boolean) as string[], note: r.dependency }))
+  const fixes: Fix[] = plan.recommendations.map((r) => ({ id: r.id, title: r.brandTitle, where: r.controlledSource, channel: r.channel, before: r.currentText, after: r.proposedText, facts: r.businessFactIds.map((id) => facts.find((f) => f.id === id)?.label).filter(Boolean) as string[], note: r.dependency, group: r.geoGroup, technique: r.technique, why: r.whyForAI, basedOn: r.basedOnQuestions, preview: r.preview, evidence: r.evidenceBasis ?? (r.gapConfidence === 'Confirmed gap' ? 'confirmed_gap' : 'hypothesis_to_test'), evidenceText: r.evidenceExplanation, priority: r.priority, priorityReason: r.priorityReason, delivery: r.delivery, limitation: r.aiImpactNote }))
   return (
     <ProposalShell id={`disc:${oppId}`} type="disc" title={`${loc.name} — help parents find your centre`} status={planStatus(plan.status)} round={plan.round}>
       <FindingLine>
         <span className="font-semibold">What we found:</span> not mentioned in {missed.length} relevant sampled recommendation{missed.length === 1 ? '' : 's'} — {missed.map((o) => `“${o.query}”`).join(', ')}. A discovery opportunity, not an AI error.
       </FindingLine>
-      {applying ? <Applying onDone={() => setApplying(false)} /> : <FixPanel proposalKey={`disc:${oppId}`} kind="disc" locationId={opp.locationId} fixes={fixes} status={plan.status} taskIds={plan.taskIds} onApproved={() => setApplying(true)} />}
+      {applying ? <Applying onDone={() => setApplying(false)} /> : <FixPanel proposalKey={`disc:${oppId}`} kind="disc" locationId={opp.locationId} fixes={fixes} status={plan.status} taskIds={plan.taskIds} round={plan.round} onApproved={() => setApplying(true)} />}
       <div className="space-y-2">
         <Disclosure title="Why ProManage recommends this">
           <p className="whitespace-pre-line text-[13.5px] text-ink">{plan.summary}</p>
@@ -346,7 +569,7 @@ function DiscoveryProposal({ oppId }: { oppId: string }) {
             {findings.map((f) => (
               <li key={f.id} className="text-[13.5px]">
                 <span className="font-medium text-ink">{f.surfaceLabel}</span> <span className="text-muted">({CATEGORY_LABEL[f.category]}, snapshot 14 Oct 2026)</span>: <span className="text-body">{f.observation}</span>{' '}
-                <Badge tone={f.certainty === 'confirmed_gap' ? 'warning' : f.certainty === 'no_gap' ? 'success' : 'neutral'}>{f.certainty === 'confirmed_gap' ? 'Confirmed information gap' : f.certainty === 'no_gap' ? 'No gap' : f.certainty === 'potential_gap' ? 'Possible gap' : 'Couldn’t check'}</Badge>
+                <Badge tone={f.certainty === 'confirmed_gap' ? 'warning' : f.certainty === 'no_gap' ? 'success' : 'neutral'}>{f.certainty === 'confirmed_gap' ? 'Confirmed missing information' : f.certainty === 'no_gap' ? 'No gap' : f.certainty === 'potential_gap' ? 'Possible factor to test' : 'Couldn’t check'}</Badge>
               </li>
             ))}
           </ul>
@@ -422,7 +645,35 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
     before: it.kind === 'owned_website' ? valueOf('owned_website', 'owned_website') : it.kind === 'managed_listing' ? valueOf('managed_listing', 'managed_listing') : it.kind === 'external_request' ? valueOf('external_request', 'external_directory') : null,
     after: it.kind === 'structured_info' ? null : verified,
   }))
-  const fixes: Fix[] = targets.map((t) => ({ id: t.id, title: t.channel === 'structured_info' ? 'Technical information prepared by ProManage' : t.label, where: t.where, channel: t.channel, before: t.before, after: t.after, facts: issue.field && t.channel !== 'structured_info' ? [phrase] : undefined }))
+  const hours = effectiveLocation(issue.locationId, factEdits).verifiedFields.hours?.value
+  const fixes: Fix[] = targets.map((t) => {
+    const host = t.where.match(/https?:\/\/([^/\s]+)/)?.[1]
+    return {
+      id: t.id,
+      title: t.channel === 'structured_info' ? 'Technical information prepared by ProManage' : t.label,
+      where: t.where,
+      channel: t.channel,
+      before: t.before,
+      after: t.channel === 'owned_website' && issue.field === 'saturdayTours' && verified && hours ? `Campus visits: ${verified}, by booking.\nRegular opening hours stay ${hours} (tour slots are listed separately).` : t.after,
+      facts: issue.field && t.channel !== 'structured_info' ? [phrase] : undefined,
+      technique: t.channel === 'external_request' ? 'Correction request draft' : t.channel === 'structured_info' ? 'Schema from verified facts' : 'Correct the source',
+      evidence: 'confirmed_conflict' as const,
+      evidenceText: t.channel === 'structured_info' ? 'Generated from the verified record; mirrors the corrected visible text.' : `Source snapshot shows “${t.before ?? 'not stated'}”; the verified record says “${verified ?? '—'}”.`,
+      priority: t.channel === 'external_request' ? ('medium' as const) : t.channel === 'structured_info' ? ('low' as const) : ('high' as const),
+      priorityReason: t.channel === 'external_request' ? 'Independent source; ProManage can only request a change' : t.channel === 'structured_info' ? 'Supports the visible correction' : 'A source you control states the wrong fact',
+      limitation: 'Correcting the source doesn’t change the recorded AI answer. Whether AI repeats the correct fact is measured in a later check.',
+      why: t.channel === 'external_request' ? 'AI assistants read independent directories too. An outdated listing there can keep the wrong answer alive.' : t.channel === 'structured_info' ? undefined : `AI repeats what your own sources say. This source still shows the old ${phrase}.`,
+      preview:
+        t.channel === 'external_request' && host && verified
+          ? {
+              kind: 'email' as const,
+              sourceUrl: t.where.match(/https?:\/\/\S+/)?.[0],
+              subject: `Request to correct BrightNest ${loc.neighborhood} ${phrase}`,
+              body: `Hello,\n\nWe noticed that your listing for BrightNest Preschool – ${loc.neighborhood}${t.where.match(/https?:\/\/\S+/) ? ` at ${t.where.match(/https?:\/\/\S+/)![0]}` : ''} shows the ${phrase} as “${t.before ?? 'not stated'}”. Our verified centre information states: ${verified}${issue.field === 'saturdayTours' && hours ? `, separate from regular opening hours (${hours})` : ''}. Could you please update the listing? We can provide confirmation if helpful.\n\nThank you,\n[Authorized BrightNest representative]`,
+            }
+          : undefined,
+    }
+  })
   return (
     <ProposalShell id={`acc:${issue.id}`} type="acc" title={`${loc.name} — correct ${phrase}`} status={planStatus(plan.status)} round={plan.round}>
       <FindingLine>
@@ -457,9 +708,12 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
 export default function ImprovePage() {
   const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal, publications } = useStore()
   const disc = useDiscovery()
+  const { views } = useBrandViews()
   const { hash } = useLocation()
   const [sel, setSel] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'awaiting' | 'authorized' | 'closed'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'disc' | 'acc'>('all')
+  const [locFilter, setLocFilter] = useState('all')
   useEffect(() => {
     if (hash) {
       setSel(decodeURIComponent(hash.slice(1)))
@@ -497,22 +751,39 @@ export default function ImprovePage() {
   const items = locs.flatMap((locId) => [
     ...discPlans
       .filter((o) => o.locationId === locId)
-      .map((o) => ({ key: `disc:${o.id}`, type: 'disc' as const, title: `${LOCATION_BY_ID[locId].name} — help parents find your centre`, status: disc.record(o.id)!.plan!.status as string, node: <DiscoveryProposal key={o.id} oppId={o.id} /> })),
+      .map((o) => ({ locId, ready: disc.record(o.id)!.plan!.recommendations.filter((r) => r.delivery !== 'advisory_only').length, key: `disc:${o.id}`, type: 'disc' as const, title: `${LOCATION_BY_ID[locId].name} — help parents find your centre`, status: disc.record(o.id)!.plan!.status as string, node: <DiscoveryProposal key={o.id} oppId={o.id} /> })),
     ...accIssues
       .filter((i) => i.locationId === locId)
-      .map((i) => ({ key: `acc:${i.id}`, type: 'acc' as const, title: `${LOCATION_BY_ID[locId].name} — correct ${i.field ? (FIELD_PHRASE[i.field] ?? i.field) : 'information'}`, status: plans[i.id].status as string, node: <AccuracyProposal key={i.id} issue={i} /> })),
+      .map((i) => ({ locId, ready: plans[i.id].items.length, key: `acc:${i.id}`, type: 'acc' as const, title: `${LOCATION_BY_ID[locId].name} — correct ${i.field ? (FIELD_PHRASE[i.field] ?? i.field) : 'information'}`, status: plans[i.id].status as string, node: <AccuracyProposal key={i.id} issue={i} /> })),
   ])
   const current = items.find((i) => i.key === sel) ?? items.find((i) => i.status === 'awaiting_brand_approval') ?? items[0]
   // Keep the proposal you're looking at selected, even after its status changes.
   if (!sel && current) queueMicrotask(() => setSel(current.key))
+  // How Detect's findings map onto this page, counted the same way Detect counts them.
+  const accViews = views.filter((v) => v.issue.auditId === latestAudit.id && v.stage !== 'not_an_issue' && inScope(v.issue.locationId))
+  const noSourceIds = new Set(accNoSource.map((i) => i.id))
+  const accNeedsInput = accViews.filter((v) => !plans[v.issue.id] && !noSourceIds.has(v.issue.id))
+  let discCovered = 0
+  let discNoGap = 0
+  let discRelevance = 0
+  for (const locId of latestAudit.locationIds.filter(inScope)) {
+    const rows = disc.observationsOf({ auditId: latestAudit.id, locationId: locId }).filter((o) => !o.mentioned && disc.eligibility(locId, o.promptId).status !== 'not_relevant')
+    const eligible = rows.filter((o) => disc.eligibility(locId, o.promptId).status === 'eligible').length
+    discRelevance += rows.length - eligible
+    if (disc.record(discoveryId(latestAudit.id, locId))?.plan) discCovered += eligible
+    else discNoGap += eligible
+  }
+  const covered = discCovered + accIssues.length
+  const checkedNoChange = discNoGap + accNoSource.length
+  const needsInput = discRelevance + accNeedsInput.length
   const taskKeys = new Set(items.map((i) => i.key))
   const latestByTask = Object.values(Object.fromEntries(publications.filter((p) => taskKeys.has(p.proposalKey)).map((p) => [p.taskId, p])))
 
   return (
     <div className="animate-fade-in space-y-5">
       <PageHeader
-        title="ProManage has prepared improvements"
-        subtitle="From your latest standard check. ProManage checked the business information, listings, genuine reviews, location data and local content it manages — you review and authorize."
+        title="Recommended improvements"
+        subtitle="ProManage has prepared changes from your verified business information: website content, parent Q&As, listings, structured information and requests to independent sites. You review and authorize; nothing is published before you do."
         actions={
           <Button asChild>
             <Link to="/detect">
@@ -534,6 +805,9 @@ export default function ImprovePage() {
         <Sparkles className="size-4 text-teal-ink" />
         Prepared automatically by ProManage (simulated) on {fmtDateTime(autoPrepared[latestAudit.id] ?? new Date().toISOString())}. Opening this tab doesn’t approve or publish anything.
       </p>
+      <div className="rounded-xl border border-line bg-surface px-4 py-3 text-[13.5px] text-body" data-findings-map>
+        <span className="font-medium text-ink">From your {covered + checkedNoChange + needsInput} findings in Detect:</span> {items.length} proposal{items.length === 1 ? '' : 's'} cover {covered} of them (one proposal can cover several findings at a centre) · {checkedNoChange} were checked and have nothing ProManage can change, listed below · {needsInput} need confirming before fixing ({discRelevance} relevance confirmations in Detect, {accNeedsInput.length} accuracy item{accNeedsInput.length === 1 ? '' : 's'} listed below).
+      </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Proposals prepared" value={items.length} icon={<Sparkles />} tone="blue" definition="Evidence-backed proposals ProManage prepared from your standard check (simulated)." footer={`${items.filter((i) => i.type === 'disc').length} discoverability · ${items.filter((i) => i.type === 'acc').length} accuracy`} />
         <KpiCard label="Awaiting your authorization" value={awaiting} icon={<ShieldCheck />} tone="warning" definition="Proposals waiting for your decision. Nothing is published before you authorize it." footer="Approve, request changes or decline" />
@@ -544,7 +818,7 @@ export default function ImprovePage() {
         <NextStep
           chapter="03 Measure"
           title="See what changed after your approvals"
-          description={`${latestByTask.filter((p) => p.state === 'success').length} source${latestByTask.filter((p) => p.state === 'success').length === 1 ? '' : 's'} updated so far. ProManage runs a matched follow-up check with the same questions and centres.${awaiting ? ` ${awaiting} proposal${awaiting === 1 ? '' : 's'} still await your decision.` : ''}`}
+          description={`${latestByTask.filter((p) => p.state === 'success').length} source${latestByTask.filter((p) => p.state === 'success').length === 1 ? '' : 's'} updated so far. When you’re ready, run a follow-up check in Measure with the same questions and centres.${awaiting ? ` ${awaiting} proposal${awaiting === 1 ? '' : 's'} still await your decision.` : ''}`}
           to="/measure"
           cta="See before and after"
         />
@@ -565,27 +839,67 @@ export default function ImprovePage() {
                 onChange={setFilter}
                 options={[
                   { value: 'all', label: `All · ${items.length}` },
-                  { value: 'awaiting', label: 'Awaiting' },
+                  { value: 'awaiting', label: 'Awaiting approval' },
                   { value: 'authorized', label: 'Authorized' },
                   { value: 'closed', label: 'Other' },
                 ]}
               />
             </div>
-            <ul className="divide-y divide-line">
-              {items
-                .filter((i) => filter === 'all' || (filter === 'awaiting' ? i.status === 'awaiting_brand_approval' : filter === 'authorized' ? i.status === 'approved' : !['awaiting_brand_approval', 'approved'].includes(i.status)))
-                .map((i) => (
-                  <li key={i.key}>
-                    <button onClick={() => setSel(i.key)} aria-current={current?.key === i.key} className={cn('flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-subtle', current?.key === i.key && 'bg-brand-soft/50')}>
-                      <span className="flex items-center gap-2">
-                        <Badge tone={i.type === 'disc' ? 'teal' : 'blue'}>{i.type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
-                        <Badge tone={i.status === 'awaiting_brand_approval' ? 'warning' : i.status === 'approved' ? 'success' : 'neutral'}>{planStatus(i.status)}</Badge>
-                      </span>
-                      <span className="text-[14px] font-medium text-ink">{i.title}</span>
-                    </button>
-                  </li>
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
+              <Segmented
+                ariaLabel="Proposal type"
+                size="sm"
+                value={typeFilter}
+                onChange={setTypeFilter}
+                options={[
+                  { value: 'all', label: 'All types' },
+                  { value: 'disc', label: 'Discoverability' },
+                  { value: 'acc', label: 'Accuracy' },
+                ]}
+              />
+              <Select value={locFilter} onChange={(e) => setLocFilter(e.target.value)} className="h-8 w-44 text-[13px]" aria-label="Proposal location">
+                <option value="all">All locations</option>
+                {locs.map((id) => (
+                  <option key={id} value={id}>
+                    {LOCATION_BY_ID[id].name}
+                  </option>
                 ))}
-            </ul>
+              </Select>
+            </div>
+            {(() => {
+              const visible = items.filter(
+                (i) =>
+                  (filter === 'all' || (filter === 'awaiting' ? i.status === 'awaiting_brand_approval' : filter === 'authorized' ? i.status === 'approved' : !['awaiting_brand_approval', 'approved'].includes(i.status))) &&
+                  (typeFilter === 'all' || i.type === typeFilter) &&
+                  (locFilter === 'all' || i.locId === locFilter),
+              )
+              if (!visible.length) return <p className="px-4 py-4 text-[13.5px] text-body">No proposals match these filters.</p>
+              return [...new Set(visible.map((i) => i.locId))].map((locId) => {
+                const group = visible.filter((i) => i.locId === locId)
+                const ready = group.filter((i) => i.status === 'awaiting_brand_approval').reduce((n, i) => n + i.ready, 0)
+                return (
+                  <div key={locId}>
+                    <p className="border-b border-line bg-subtle/60 px-4 py-1.5 text-[12.5px] text-body">
+                      <span className="font-semibold text-ink">{LOCATION_BY_ID[locId].name}</span> · {group.length} proposal{group.length === 1 ? '' : 's'}
+                      {ready ? ` · ${ready} change${ready === 1 ? '' : 's'} ready for your approval` : ''}
+                    </p>
+                    <ul className="divide-y divide-line">
+                      {group.map((i) => (
+                        <li key={i.key}>
+                          <button onClick={() => setSel(i.key)} aria-current={current?.key === i.key} className={cn('flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-subtle', current?.key === i.key && 'bg-brand-soft/50')}>
+                            <span className="flex items-center gap-2">
+                              <Badge tone={i.type === 'disc' ? 'teal' : 'blue'}>{i.type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
+                              <Badge tone={i.status === 'awaiting_brand_approval' ? 'warning' : i.status === 'approved' ? 'success' : 'neutral'}>{planStatus(i.status)}</Badge>
+                            </span>
+                            <span className="text-[14px] font-medium text-ink">{i.title}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })
+            })()}
           </Card>
           <div id="proposal-detail" className="min-w-0 scroll-mt-24">
             {current?.node}
@@ -611,10 +925,30 @@ export default function ImprovePage() {
           </ul>
         </Card>
       )}
-      {needsConfirm.length > 0 && (
+      {(needsConfirm.length > 0 || accNeedsInput.length > 0) && (
         <Card>
-          <CardHeader title="Needs your confirmation first" description="ProManage won’t propose changes until relevance or facts are confirmed" />
+          <CardHeader title="Confirm before fixing" description="ProManage won’t propose changes until relevance or facts are confirmed" />
           <ul className="divide-y divide-line">
+            {accNeedsInput.map((v) => {
+              const unverified = v.issue.field && v.fact?.verificationStatus !== 'verified'
+              return (
+                <li key={v.issue.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-[13.5px]">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-ink">{LOCATION_BY_ID[v.issue.locationId].name} · Accuracy — {v.issue.title.toLowerCase()}</span>
+                    <span className="block text-body">
+                      {v.issue.entityConfusion
+                        ? `The AI answer may be mixing this centre up with BrightNest ${v.issue.entityConfusion}. Confirm the address with the centre first.`
+                        : unverified
+                          ? 'Your business record for this isn’t verified yet. Verify it first.'
+                          : 'The answer has no specific fact we can compare with your record. Review it first.'}
+                    </span>
+                  </span>
+                  <Button size="sm" asChild>
+                    <Link to={`/attention/${v.issue.id}`}>{v.issue.entityConfusion ? 'Confirm the address' : unverified ? 'Verify information' : 'Review'}</Link>
+                  </Button>
+                </li>
+              )
+            })}
             {needsConfirm.map((o) => (
               <li key={o.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-[13.5px]">
                 <span className="min-w-0 flex-1 text-ink">{LOCATION_BY_ID[o.locationId].name} · {o.intentCategory}</span>

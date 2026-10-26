@@ -9,7 +9,7 @@ import { suggestPlan } from '@/lib/plans'
 import { simulateAttempt } from '@/lib/publishing'
 import { buildFactSheet, buildJsonLd } from '@/lib/geoMarkup'
 
-const STORAGE_KEY = 'promanage-ai-visibility-demo'
+export const STORAGE_KEY = 'promanage-ai-visibility-demo'
 const VERSION = 7
 
 export interface MonitoringPrefs {
@@ -206,6 +206,8 @@ interface Store extends PersistedState {
   setDetectLocations: (ids: string[]) => void
   setDetectPrompts: (ids: string[]) => void
   prepareImprovements: (auditId: string) => void
+  /** Records a demo product event in the existing activity log (no analytics SDK). */
+  logEvent: (text: string) => void
   authorizeProposal: (proposalKey: string, targetIds: string[], comment?: string) => void
   rejectProposal: (proposalKey: string, action: 'request_changes' | 'decline', comment: string) => void
   reviseProposal: (proposalKey: string) => void
@@ -328,7 +330,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!audit) return []
       const recheck = state.rechecks.find((r) => r.priorAuditId === auditId && r.wave === wave)
       if (wave > 0 && !recheck) return []
-      const base = wave === 0 ? audit.createdAt : recheck!.sampledAt
+      // Follow-up answers are sampled during the check, i.e. from the moment the user started it (never before).
+      const base = wave === 0 ? audit.createdAt : new Date(new Date(recheck!.sampledAt).getTime() + 600_000).toISOString()
       // Baseline claims are evaluated against the record as it was; rechecks against the facts verified at that time.
       const snapshot = recheck?.factSnapshot ?? {}
       const list: Observation[] = []
@@ -455,7 +458,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           if (opp.eligibility !== 'eligible' || r.plan || r.monitorOnly || r.decision?.kind === 'dismissed' || r.archived) continue
           const findings = readinessFindings(opp, s.factEdits, at)
           // Changes the accuracy correction already makes aren't proposed twice; only confirmed, controllable gaps (plus request-only and site-admin checks) are proposed.
-          const usable = findings.filter((f) => f.draft && !f.blockedReason && !f.coveredByAccuracy && (f.certainty === 'confirmed_gap' || f.category === 'offsite' || f.category === 'freshness'))
+          const usable = findings.filter((f) => f.draft && !f.blockedReason && !f.coveredByAccuracy && (f.certainty === 'confirmed_gap' || f.category === 'offsite' || f.category === 'freshness' || f.draft.delivery === 'advisory_only'))
           const confirmed = usable.filter((f) => f.certainty === 'confirmed_gap')
           const base = { ...r, decision: r.decision ?? { kind: 'worth_investigating' as const, by: 'promanage' as Role, byName: system, at } }
           if (!confirmed.length) {
@@ -494,7 +497,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             prepared++
           }
         }
-        return { ...s, discovery, investigations, plans, autoPrepared: { ...s.autoPrepared, [auditId]: at }, activity: log(s, `ProManage prepared ${prepared} improvement proposals (simulated)`) }
+        return { ...s, discovery, investigations, plans, autoPrepared: { ...s.autoPrepared, [auditId]: at }, activity: log(s, `recommendation_generated · ProManage prepared ${prepared} improvement proposals (simulated)`) }
       }),
 
     authorizeProposal: (key, targetIds, comment) => {
@@ -532,9 +535,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (!plan || plan.status !== 'approved') return s
         let next = s
         for (const taskId of plan.taskIds) next = attempt(next, taskId, key, `r${plan.round}`)
-        return { ...next, activity: log(next, `Applied approved changes to connected sources (simulated) · ${key}`, 'status') }
+        const results = plan.taskIds.map((tid) => next.publications.filter((p) => p.taskId === tid).pop()).filter(Boolean)
+        const count = (st: string) => results.filter((r) => r!.state === st).length
+        let activity = log(next, `proposal_approved · ${key} · version r${plan.round}`, 'approval')
+        activity = log({ ...next, activity }, `publish_target_result · ${key} · ${count('success')} published, ${count('failed')} failed, ${count('blocked')} need site admin, ${count('manual_handoff')} external request prepared (simulated)`, 'status')
+        if (count('manual_handoff')) activity = log({ ...next, activity }, `external_request_draft_approved · ${key} · handed off to ProManage, not sent`, 'status')
+        return { ...next, activity }
       })
     },
+
+    logEvent: (text) => setState((s) => ({ ...s, activity: log(s, text, 'system') })),
 
     rejectProposal: (key, action, comment) => {
       const [kind, id] = splitKey(key)
@@ -543,6 +553,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (!plan) return s
         return { ...s, approvals: [...s.approvals, { id: uid('appr'), proposalKey: key, approvedVersion: `r${plan.round}`, approvedTargetIds: [], approverRole: 'brand', approverName: actorName(s.role), verifiedFactVersionIds: [], action, comment, at: now() }] }
       })
+      setState((s) => ({ ...s, activity: log(s, `${action === 'decline' ? 'proposal_declined' : 'proposal_changes_requested'} · ${key}`, 'status') }))
       if (kind === 'disc') (action === 'decline' ? store.declineDiscoveryPlan : store.requestDiscoveryPlanChanges)(id, comment)
       else (action === 'decline' ? store.declinePlan : store.requestPlanChanges)(id, comment)
     },
@@ -1306,14 +1317,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     runRecheck: (auditId) => {
       const audit = state.audits.find((a) => a.id === auditId)!
+      const at = now()
       const wave = state.rechecks.filter((r) => r.priorAuditId === auditId).length + 1
       const recheck: Recheck = {
         id: `${auditId}-recheck-${wave}`,
         priorAuditId: auditId,
         wave,
         cohortFingerprint: `${audit.locationIds.length}L×${audit.promptIds.length}P · ${audit.surface} · rules v1`,
-        sampledAt: new Date(new Date(audit.createdAt).getTime() + wave * 7 * DAY).toISOString(),
-        createdAt: now(),
+        // One timestamp for the whole follow-up: when the user ran it (shown in Measure, history, timeline and reports).
+        sampledAt: at,
+        createdAt: at,
         factSnapshot: Object.fromEntries(Object.entries(state.factEdits).filter(([, e]) => e.status === 'verified')),
         simulated: true,
       }

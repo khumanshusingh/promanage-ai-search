@@ -14,11 +14,11 @@ export const PERMISSION_LABEL: Record<TargetPermission, string> = {
 }
 
 export const STATE_LABEL: Record<PublicationAttempt['state'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' | 'blue' }> = {
-  success: { label: 'Updated (simulated)', tone: 'success' },
+  success: { label: 'Published (simulated)', tone: 'success' },
   pending: { label: 'Pending', tone: 'blue' },
   failed: { label: 'Failed — ProManage follow-up', tone: 'danger' },
-  blocked: { label: 'Needs access', tone: 'warning' },
-  manual_handoff: { label: 'External handoff', tone: 'warning' },
+  blocked: { label: 'Needs site admin', tone: 'warning' },
+  manual_handoff: { label: 'External request prepared', tone: 'warning' },
 }
 
 /** Seeded connector failures used to demonstrate partial publication honestly (first attempt only). */
@@ -29,7 +29,7 @@ const SEEDED_FAILURES: Record<string, string> = {
 export function targetPermission(t: Pick<Task, 'channel' | 'recommendationId' | 'locationId'>): { permission: TargetPermission; reason: string } {
   if (t.channel === 'external_request') return { permission: 'third_party_unmanaged', reason: 'Independent site — ProManage can send a correction request; the site owner decides.' }
   if (t.channel === 'verification') return { permission: 'unsupported', reason: 'Business-fact verification is a Brand decision, not a publication.' }
-  if (t.recommendationId === 'rec-freshness-sitemap') return { permission: 'requires_site_admin', reason: 'Sitemap and crawler settings need your site administrator; ProManage won’t change them automatically.' }
+  if (t.recommendationId === 'rec-freshness-sitemap' || t.recommendationId === 'rec-geo-ai-crawlers') return { permission: 'requires_site_admin', reason: 'Sitemap and crawler settings need your site administrator; ProManage won’t change them automatically.' }
   if (t.channel === 'managed_listing') return { permission: 'connected_authorized', reason: 'Managed through ProManage Listing Management (simulated connector).' }
   return { permission: 'connected_authorized', reason: 'Centre page connected to ProManage’s CMS integration (simulated).' }
 }
@@ -37,7 +37,7 @@ export function targetPermission(t: Pick<Task, 'channel' | 'recommendationId' | 
 /** Deterministic outcome for one attempt. `attemptNo` starts at 1. */
 export function simulateAttempt(t: Pick<Task, 'channel' | 'recommendationId' | 'locationId'>, attemptNo: number): Pick<PublicationAttempt, 'state' | 'detail' | 'permission'> {
   const { permission, reason } = targetPermission(t)
-  if (permission === 'third_party_unmanaged') return { permission, state: 'manual_handoff', detail: 'Correction request prepared and sent by ProManage (simulated). Not marked updated until the site owner changes it.' }
+  if (permission === 'third_party_unmanaged') return { permission, state: 'manual_handoff', detail: 'Request draft approved and handed off to ProManage (simulated). Nothing was sent from this prototype, and the independent site isn’t marked updated.' }
   if (permission === 'requires_site_admin') return { permission, state: 'blocked', detail: reason }
   if (permission !== 'connected_authorized') return { permission, state: 'blocked', detail: reason }
   const fail = SEEDED_FAILURES[`${t.locationId}:${t.channel}`]

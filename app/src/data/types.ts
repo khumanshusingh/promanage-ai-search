@@ -396,7 +396,34 @@ export interface OptimizationRecommendation {
   aiImpactNote: string
   dependency?: string
   technicalAssetIds?: AssetKind[]
+  /** GEO presentation: which kind of improvement this is and why it helps AI assistants. */
+  geoGroup?: GeoGroup
+  technique?: string
+  whyForAI?: string
+  /** Questions from the check this fix answers, in parents' words. */
+  basedOnQuestions?: string[]
+  preview?: GeoPreview
+  /** PRD v8: how strong the evidence is (never a claim about what caused an AI answer). */
+  evidenceBasis?: EvidenceBasis
+  evidenceExplanation?: string
+  /** Qualitative priority with its reason; never a numeric score. */
+  priority?: 'high' | 'medium' | 'low'
+  priorityReason?: string
+  delivery?: ActionDelivery
 }
+
+export type EvidenceBasis = 'confirmed_gap' | 'confirmed_conflict' | 'hypothesis_to_test'
+export type ActionDelivery = 'connected_publish' | 'site_admin_handoff' | 'external_request_draft' | 'advisory_only'
+
+export type GeoGroup = 'information' | 'content' | 'trust' | 'technical' | 'offsite'
+export type GeoIntent = 'Learn' | 'Compare' | 'Decide'
+export type GeoPreview =
+  | { kind: 'qa'; items: { q: string; a: string; intent: GeoIntent }[] }
+  | { kind: 'facts'; rows: [string, string][] }
+  | { kind: 'outline'; lines: { level: 1 | 2 | 3; text: string }[] }
+  | { kind: 'code'; language: string; code: string }
+  | { kind: 'email'; to?: string; sourceUrl?: string; subject: string; body: string }
+  | { kind: 'article'; title: string; sections: { heading: string; body: string }[] }
 
 export type OptimizationPlanStatus = 'draft' | 'awaiting_brand_approval' | 'approved' | 'changes_requested' | 'declined'
 

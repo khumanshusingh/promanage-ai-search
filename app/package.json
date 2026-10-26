@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "node e2e/v8-demo.e2e.mjs && node e2e/discovery.e2e.mjs",
+    "test:e2e": "node e2e/v8-demo.e2e.mjs && node e2e/discovery.e2e.mjs && node e2e/report.e2e.mjs",
+    "test:report": "node e2e/report-metrics.test.mjs && node e2e/report.e2e.mjs",
     "test:v8": "node e2e/v8-demo.e2e.mjs"
   },
   "dependencies": {
@@ -24,6 +25,8 @@
     "@radix-ui/react-tooltip": "^1.4.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
     "lucide-react": "^1.60.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

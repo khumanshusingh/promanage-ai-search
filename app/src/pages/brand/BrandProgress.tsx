@@ -58,7 +58,7 @@ export default function BrandProgress() {
         <Card className="mb-6">
           <CardHeader title="How your AI information is changing" description="Comparable follow-up checks for your selected locations" actions={<HowMeasured>Each follow-up asks the same questions about the same centres in the same demo AI search check and compares the answers. One sample per question — answers can vary between checks.</HowMeasured>} />
           {rechecks.length === 0 ? (
-            <p className="px-5 py-4 text-[14px] text-body">No follow-up check yet. ProManage runs follow-up checks after information updates are completed.</p>
+            <p className="px-5 py-4 text-[14px] text-body">No follow-up check yet. Run one from 03 Measure once your updates are published.</p>
           ) : (
             <div className="grid grid-cols-1 gap-5 px-5 py-4 lg:grid-cols-[1fr_1fr]">
               <div className="grid grid-cols-3 gap-3">

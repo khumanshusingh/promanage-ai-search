@@ -66,7 +66,7 @@ function ProductSwitcher() {
         </span>
         <span className="min-w-0 flex-1 leading-tight">
           <span className="block text-[14px] font-semibold text-ink">Monitor AI</span>
-          <span className="block truncate text-[11.5px] text-muted">Search visibility</span>
+          <span className="block truncate text-[11.5px] text-muted">AI Search Visibility</span>
         </span>
         <ChevronDown className="size-4 text-muted" />
       </DM.Trigger>
@@ -109,20 +109,15 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       <div className="px-3 pt-4">
         <ProductSwitcher />
-        <div className="mt-3 space-y-0.5">
-          <span className="flex h-9 cursor-default items-center gap-2.5 rounded-lg px-3 text-[13.5px] font-medium text-[#98a4b5] [&_svg]:size-[17px]" title="Existing Monitor AI module — not part of this demo">
-            <BarChart3 />
-            <span className="flex-1">Search Rankings</span>
-          </span>
-        </div>
-        <p className="mt-4 flex items-center gap-2 px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8a97a9]">
-          AI Visibility
-          <span className="rounded-full bg-brand-soft px-1.5 py-px text-[10px] font-semibold normal-case tracking-normal text-brand">New</span>
+        <p className="mt-4 flex items-center gap-2 border-t border-line px-3 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8a97a9]">
+          {brand ? 'Your AI visibility journey' : 'AI Visibility'}
           {!brand && <span className="ml-auto text-[10.5px] font-medium normal-case tracking-normal">Ops</span>}
         </p>
       </div>
       {brand ? (
-        <ChapterNav onNavigate={onNavigate} awaiting={counts['/attention']} />
+        <div className="flex-1">
+          <ChapterNav onNavigate={onNavigate} awaiting={counts['/attention']} />
+        </div>
       ) : (
       <nav className="flex-1 space-y-0.5 px-3" aria-label="AI Visibility">
         {NAV.map((item) => {
@@ -157,42 +152,78 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
       )}
+      <div className="mx-3 mb-4 mt-2 border-t border-line pt-3">
+        <span className="flex h-9 cursor-default items-center gap-2.5 rounded-lg px-3 text-[13.5px] font-medium text-[#98a4b5] [&_svg]:size-[17px]" title="Existing Monitor AI module, not part of this demo">
+          <BarChart3 />
+          <span className="flex-1">Search Rankings</span>
+        </span>
+      </div>
     </div>
   )
 }
 
 const CHAPTERS: { to: string; n: DemoChapter; label: string; tag: Release; icon: ReactNode; blurb: string }[] = [
-  { to: '/detect', n: 1, label: 'Detect', tag: 'MVP', icon: <ScanSearch />, blurb: 'What AI says about your centres' },
-  { to: '/improve', n: 2, label: 'Improve', tag: 'V1', icon: <Sparkles />, blurb: 'Review & authorize changes' },
-  { to: '/measure', n: 3, label: 'Measure', tag: 'V2', icon: <ListChecks />, blurb: 'What AI said afterward' },
+  { to: '/detect', n: 1, label: 'Detect', tag: 'MVP', icon: <ScanSearch />, blurb: 'Find AI visibility problems' },
+  { to: '/improve', n: 2, label: 'Improve', tag: 'V1', icon: <Sparkles />, blurb: 'Review & approve fixes' },
+  { to: '/measure', n: 3, label: 'Measure', tag: 'V2', icon: <LineChart />, blurb: 'Recheck AI search results' },
 ]
 
-/** Three always-clickable chapters; the first click on a chapter unlocks it cumulatively (never approves anything). */
+/**
+ * Three always-clickable chapters; the first click on a chapter unlocks it cumulatively (never approves or rechecks).
+ * A stage shows as done only after real work: a completed check, an approval, a follow-up the Brand ran.
+ */
 function ChapterNav({ onNavigate, awaiting }: { onNavigate?: () => void; awaiting?: number }) {
-  const { hasRelease } = useStore()
+  const { hasRelease, latestAudit, approvals, rechecksFor } = useStore()
+  const done: Record<DemoChapter, boolean> = {
+    1: !!latestAudit,
+    2: approvals.some((a) => a.action === 'approve'),
+    3: !!latestAudit && rechecksFor(latestAudit.id).length > 0,
+  }
   return (
-    <nav className="flex-1 space-y-1 px-3" aria-label="AI Visibility chapters">
+    <nav className="relative space-y-0.5 px-3" aria-label="AI Visibility chapters">
+      {/* journey connector */}
+      <span aria-hidden className="absolute bottom-6 left-[27px] top-6 w-px bg-line" />
       {CHAPTERS.map((c) => {
         const unlocked = hasRelease(c.tag)
+        const complete = done[c.n]
         return (
           <NavLink
             key={c.to}
             to={c.to}
             onClick={onNavigate}
-            className={({ isActive }) => cn('group relative flex items-start gap-2.5 rounded-lg px-3 py-2 transition-colors duration-150 [&_svg]:mt-0.5 [&_svg]:size-[17px]', isActive ? 'bg-brand-soft text-brand' : 'text-body hover:bg-[#f1f4f9] hover:text-ink')}
+            title={unlocked ? undefined : 'Opens this stage of the demo'}
+            className={({ isActive }) =>
+              cn(
+                'group relative flex items-start gap-2.5 rounded-lg px-3 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-brand/60',
+                isActive ? 'bg-brand-soft' : 'hover:bg-[#f1f4f9]',
+              )
+            }
           >
             {({ isActive }) => (
               <>
-                {isActive && <span className="absolute -left-3 top-2 h-7 w-[3px] rounded-r-full bg-brand" />}
-                {c.icon}
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 text-[13.5px] font-semibold">
-                    <span className="tabular text-muted">0{c.n} ·</span> {c.label}
-                    <span className={cn('rounded px-1 py-px text-[10px] font-semibold', unlocked ? 'bg-teal-soft text-teal-ink' : 'bg-subtle text-muted ring-1 ring-line')}>{c.tag}</span>
-                  </span>
-                  <span className="block text-[11.5px] font-normal text-muted">{unlocked ? c.blurb : 'Click to unlock'}</span>
+                {isActive && <span className="absolute -left-3 top-2 h-[calc(100%-16px)] w-[3px] rounded-r-full bg-brand" />}
+                <span className={cn('relative z-[1] mt-px grid size-[22px] shrink-0 place-items-center rounded-md bg-surface [&_svg]:size-[16px]', isActive ? 'text-brand' : complete ? 'text-teal-ink' : 'text-muted')}>
+                  {c.icon}
+                  {complete && (
+                    <span className="absolute -bottom-1 -right-1 grid size-3 place-items-center rounded-full bg-teal-ink text-white ring-2 ring-surface" aria-label={`${c.label} completed`}>
+                      <Check className="!size-2" strokeWidth={4} />
+                    </span>
+                  )}
                 </span>
-                {c.n === 2 && unlocked && awaiting ? <span className="tabular mt-0.5 rounded-full bg-[#eef2f7] px-1.5 text-[11.5px] font-semibold text-body">{awaiting}</span> : null}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 whitespace-nowrap">
+                    <span className={cn('text-[13.5px]', isActive ? 'font-semibold text-brand' : 'font-medium text-ink')}>
+                      <span className="tabular">0{c.n}</span> · {c.label}
+                    </span>
+                    <span className="ml-auto text-[10.5px] font-medium text-[#98a4b5]">{c.tag}</span>
+                    {c.n === 2 && awaiting ? (
+                      <span className="tabular grid h-[18px] min-w-[18px] place-items-center rounded-full bg-warning-soft px-1 text-[10.5px] font-semibold text-warning" aria-label={`${awaiting} awaiting your approval`}>
+                        {awaiting}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block truncate text-[12px] text-muted">{c.blurb}</span>
+                </span>
               </>
             )}
           </NavLink>
@@ -317,7 +348,6 @@ function BrandStatusBar() {
       <span className="rounded-full bg-brand-soft px-2 py-0.5 font-medium text-brand">{acc} accuracy findings</span>
       {hasRelease('V1') && <span className="rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning">{awaiting} need your approval</span>}
       <span className="ml-auto flex flex-wrap items-center gap-3">
-        <NavLink className="hover:text-ink hover:underline" to="/detect#locations">Choose locations</NavLink>
         <NavLink className="hover:text-ink hover:underline" to={`/audits/${latestAudit.id}`}>View evidence</NavLink>
         <NavLink className="hover:text-ink hover:underline" to="/reports">Download report</NavLink>
         {hasRelease('V1') && <NavLink className="hover:text-ink hover:underline" to="/improve#history">Approval history</NavLink>}
@@ -357,9 +387,6 @@ export function AppShell() {
         <main className="print-full mx-auto max-w-[1440px] px-4 pb-16 pt-6 sm:px-6 lg:px-8 lg:pt-8">
           <Outlet />
         </main>
-        <footer className="no-print border-t border-line px-4 py-4 text-center text-[12px] text-muted sm:px-6 lg:px-8">
-          Concept prototype by Khumanshu Singh for a ProManage product roadmap assignment · fictional brand and simulated data · not an official ProManage product
-        </footer>
       </div>
     </div>
   )
