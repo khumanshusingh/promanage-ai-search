@@ -40,6 +40,8 @@ interface PersistedState {
   discovery: Record<string, DiscoveryRecord>
   /** v7: audits whose findings ProManage has already prepared improvements for (simulated backend). */
   autoPrepared: Record<string, string>
+  /** Audits whose "no gap" discovery findings were re-investigated for content optimizations (one-time). */
+  optimizeChecked?: Record<string, boolean>
   approvals: ProposalApproval[]
   publications: PublicationAttempt[]
   goals: PrioritySearchGoal[]
@@ -445,7 +447,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     prepareImprovements: (auditId) =>
       setState((s) => {
         const audit = s.audits.find((a) => a.id === auditId)
-        if (!audit || s.autoPrepared[auditId]) return s
+        if (!audit || (s.autoPrepared[auditId] && s.optimizeChecked?.[auditId])) return s
+        const rerun = !!s.autoPrepared[auditId]
         const at = now()
         const system = 'ProManage (automated)'
         const discovery = { ...s.discovery }
@@ -455,19 +458,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         const opps = deriveOpportunities(audit, observationsFor(auditId, 0), { prompts: promptsById, eligibility: s.discoveryEligibility, factEdits: s.factEdits, records: s.discovery, tasks: s.tasks, release: 'V1' })
         for (const opp of opps) {
           const r = discovery[opp.id] ?? { history: [] }
-          if (opp.eligibility !== 'eligible' || r.plan || r.monitorOnly || r.decision?.kind === 'dismissed' || r.archived) continue
+          // A re-run only revisits "no gap" findings (to look for content optimizations); everything else is left as it was.
+          if (opp.eligibility !== 'eligible' || r.plan || (r.monitorOnly && !rerun) || (rerun && !r.monitorOnly) || r.decision?.kind === 'dismissed' || r.archived) continue
           const findings = readinessFindings(opp, s.factEdits, at)
           // Changes the accuracy correction already makes aren't proposed twice; only confirmed, controllable gaps (plus request-only and site-admin checks) are proposed.
           const usable = findings.filter((f) => f.draft && !f.blockedReason && !f.coveredByAccuracy && (f.certainty === 'confirmed_gap' || f.category === 'offsite' || f.category === 'freshness' || f.draft.delivery === 'advisory_only'))
           const confirmed = usable.filter((f) => f.certainty === 'confirmed_gap')
           const base = { ...r, decision: r.decision ?? { kind: 'worth_investigating' as const, by: 'promanage' as Role, byName: system, at } }
           if (!confirmed.length) {
+            if (rerun) continue
             discovery[opp.id] = { ...base, investigation: { status: 'completed', requestedBy: 'promanage', requestedAt: at, checkedAt: at, completedAt: at, result: 'no_gap', findingReviews: {}, note: 'Sources inspected look complete' }, monitorOnly: { by: system, at, note: 'No confirmed, controllable gap found' }, history: [...r.history, { at, by: system, text: 'Checked managed sources — no supported change recommended yet' }] }
             continue
           }
           const loc = LOCATION_BY_ID[opp.locationId]
           discovery[opp.id] = {
             ...base,
+            monitorOnly: undefined,
             investigation: { status: 'completed', requestedBy: 'promanage', requestedAt: at, checkedAt: at, completedAt: at, result: 'gaps_found', findingReviews: Object.fromEntries(usable.map((f) => [f.id, 'confirmed' as const])) },
             plan: {
               id: `plan-${opp.id}-r1`,
@@ -485,7 +491,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           }
           prepared++
         }
-        for (const issue of issues.filter((i) => i.auditId === auditId && i.category === 'factual_mismatch' && !i.entityConfusion)) {
+        for (const issue of rerun ? [] : issues.filter((i) => i.auditId === auditId && i.category === 'factual_mismatch' && !i.entityConfusion)) {
           if (plans[issue.id] || s.reviews[issue.reviewKey]?.status === 'not_issue') continue
           const verified = issue.field ? effectiveLocation(issue.locationId, s.factEdits).verifiedFields[issue.field] : null
           if (!verified || verified.status !== 'verified') continue
@@ -497,7 +503,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             prepared++
           }
         }
-        return { ...s, discovery, investigations, plans, autoPrepared: { ...s.autoPrepared, [auditId]: at }, activity: log(s, `recommendation_generated · ProManage prepared ${prepared} improvement proposals (simulated)`) }
+        return { ...s, discovery, investigations, plans, autoPrepared: { ...s.autoPrepared, [auditId]: s.autoPrepared[auditId] ?? at }, optimizeChecked: { ...s.optimizeChecked, [auditId]: true }, activity: log(s, `recommendation_generated · ProManage prepared ${prepared} ${rerun ? 'content optimization' : 'improvement'} proposals (simulated)`) }
       }),
 
     authorizeProposal: (key, targetIds, comment) => {

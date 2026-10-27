@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, CheckCircle2, ChevronDown, Code2, Copy, Download, Loader2, RotateCcw, ScanSearch, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ActionDelivery, EvidenceBasis, GeoGroup, GeoPreview, Issue, Task } from '@/data/types'
 import { LOCATION_BY_ID } from '@/data/seed'
@@ -322,6 +322,9 @@ function Clamp({ text }: { text: string }) {
 }
 
 /** The actionable heart of a proposal: selectable fix cards + one authorize bar, or per-target results after approval. */
+/** Unsaved checkbox selections per proposal, kept while the Brand switches between proposals. */
+const PickedCtx = createContext<{ get: (key: string) => string[] | undefined; set: (key: string, ids: string[]) => void } | null>(null)
+
 const deliveryOf = (f: Fix, permission: string): ActionDelivery => f.delivery ?? (permission === 'third_party_unmanaged' ? 'external_request_draft' : permission === 'requires_site_admin' ? 'site_admin_handoff' : 'connected_publish')
 
 function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApproved, round = 1 }: { proposalKey: string; kind: 'disc' | 'acc'; locationId: string; fixes: Fix[]; status: string; taskIds: string[]; onApproved: () => void; round?: number }) {
@@ -329,7 +332,14 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
   const logPreview = (f: Fix) => logEvent(`action_preview_opened · ${f.title} · ${proposalKey}`)
   const { authorizeProposal, rejectProposal, reviseProposal, tasks, publications, retryPublication, logEvent } = useStore()
   const selectable = (f: Fix) => f.delivery !== 'advisory_only'
-  const [picked, setPicked] = useState<string[]>(fixes.filter(selectable).map((f) => f.id))
+  const store = useContext(PickedCtx)
+  const [picked, setPickedLocal] = useState<string[]>(() => store?.get(proposalKey) ?? fixes.filter(selectable).map((f) => f.id))
+  const setPicked = (fn: (p: string[]) => string[]) =>
+    setPickedLocal((p) => {
+      const next = fn(p)
+      store?.set(proposalKey, next)
+      return next
+    })
   const [openEvidence, setOpenEvidence] = useState<string | null>(null)
   const { role } = useStore()
   const [dlg, setDlg] = useState<null | 'approve' | 'request_changes' | 'decline'>(null)
@@ -344,24 +354,36 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
     <div className="rounded-xl border-2 border-brand-line bg-brand-soft/30">
       <div className="flex flex-wrap items-center gap-3 border-b border-brand-line px-4 py-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[15px] font-semibold text-ink">
-            {fixes.length} recommended change{fixes.length === 1 ? '' : 's'}
-          </p>
-          <p className="text-[12.5px] text-body">
-            {approved ? AGGREGATE_LABEL[agg] : awaiting ? `${picked.length} selected · ${auto} publish automatically after approval · ${picked.length - auto} need follow-up` : status === 'declined' ? 'You declined these fixes. Nothing was published.' : 'ProManage is revising these fixes. Nothing was published.'}
-          </p>
+          {awaiting ? (
+            <>
+              <p className="text-[15px] font-semibold text-ink">
+                {picked.length} of {fixes.filter(selectable).length} changes selected
+              </p>
+              <p className="mt-0.5 flex flex-wrap gap-x-3 text-[12.5px] text-body">
+                <span><span className="font-semibold text-success">{auto}</span> can publish through authorized integrations</span>
+                <span><span className="font-semibold text-warning">{picked.length - auto}</span> require follow-up</span>
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] font-semibold text-ink">
+                {fixes.length} recommended change{fixes.length === 1 ? '' : 's'}
+              </p>
+              <p className="text-[12.5px] text-body">{approved ? AGGREGATE_LABEL[agg] : status === 'declined' ? 'You declined these fixes. Nothing was published.' : 'ProManage is revising these fixes. Nothing was published.'}</p>
+            </>
+          )}
         </div>
         {awaiting && (
-          <div className="flex flex-wrap gap-2">
-            <PermButton perm="approvePlan" variant="primary" disabled={!picked.length} onClick={() => { setText(''); setDlg('approve') }}>
-              <ShieldCheck />
-              Approve & authorize selected ({picked.length})
-            </PermButton>
-            <PermButton perm="approvePlan" onClick={() => { setText(''); setErr(undefined); setDlg('request_changes') }}>
+          <div className="flex flex-wrap items-center gap-1">
+            <PermButton perm="approvePlan" variant="ghost" size="sm" className="text-body" onClick={() => { setText(''); setErr(undefined); setDlg('request_changes') }}>
               Request changes
             </PermButton>
-            <PermButton perm="approvePlan" variant="ghost" onClick={() => { setText(''); setErr(undefined); setDlg('decline') }}>
+            <PermButton perm="approvePlan" variant="ghost" size="sm" className="text-muted" onClick={() => { setText(''); setErr(undefined); setDlg('decline') }}>
               Decline
+            </PermButton>
+            <PermButton perm="approvePlan" variant="primary" size="lg" className="ml-1 h-11 px-5 shadow-pop" disabled={!picked.length} onClick={() => { setText(''); setDlg('approve') }}>
+              <ShieldCheck />
+              Approve selected ({picked.length})
             </PermButton>
           </div>
         )}
@@ -534,6 +556,43 @@ function FixPanel({ proposalKey, kind, locationId, fixes, status, taskIds, onApp
   )
 }
 
+/* Proposal display titles, derived from what each proposal actually covers (never from a location or the first fix). */
+const ACC_TITLE: Partial<Record<string, string>> = {
+  saturdayTours: 'Fix Saturday tour details',
+  hours: 'Fix incorrect opening hours',
+  phone: 'Fix incorrect phone number',
+  operatingStatus: 'Correct centre operating status',
+  address: 'Fix incorrect address',
+  programs: 'Fix programme information',
+  website: 'Fix website link',
+  name: 'Fix centre name',
+}
+const accuracyTitle = (field?: string | null) => (field ? (ACC_TITLE[field] ?? `Fix ${FIELD_PHRASE[field as keyof typeof FIELD_PHRASE] ?? field}`) : 'Review possibly incorrect information')
+
+/** Parent-question topics, most specific first; 'overview' is the general "best preschools near…" intent. */
+const TOPIC: [string, string][] = [
+  ['p5', 'Montessori'],
+  ['p2', 'Saturday tour'],
+  ['p3', 'daycare'],
+  ['p9', 'toddler playgroup'],
+  ['p4', 'parent review'],
+  ['p1', 'centre overview'],
+]
+/**
+ * Discoverability title from the proposal's own summary: the questions the centre was missed for AND that the
+ * proposed changes actually address (via each change's finding). Unaddressed questions are not claimed.
+ */
+function discoveryTitle(targetPromptIds: string[], coveredPromptIds: string[], groups: (GeoGroup | undefined)[] = []) {
+  // Only findability changes (links, sitemap, review links) and no new wording: say so rather than calling it content.
+  if (groups.length && !groups.some((g) => g === 'content' || g === 'information' || g === undefined)) return coveredPromptIds.includes('p4') ? 'Make the centre page & reviews easier to find' : 'Make the centre page easier to find'
+  const topics = TOPIC.filter(([id]) => targetPromptIds.includes(id) && coveredPromptIds.includes(id)).map(([, label]) => label)
+  if (!topics.length) return 'Make centre information easier to find'
+  if (topics.length === 1) return `Improve ${topics[0]} content`
+  // A specific topic plus the general intent: the changes describe the centre and that topic.
+  if (topics.length === 2 && topics[1] === 'centre overview') return `Improve centre overview & ${topics[0]} content`
+  return `Strengthen ${topics.slice(0, 2).join(' & ')} information`
+}
+
 const planStatus = (s: string) => (s === 'awaiting_brand_approval' ? 'Awaiting your authorization' : s === 'approved' ? 'Authorized' : s === 'changes_requested' ? 'Changes requested' : s === 'declined' ? 'Declined' : 'Draft')
 
 function FindingLine({ children }: { children: React.ReactNode }) {
@@ -541,20 +600,20 @@ function FindingLine({ children }: { children: React.ReactNode }) {
 }
 
 function DiscoveryProposal({ oppId }: { oppId: string }) {
-  const { byId, record, findingsFor, observationsOf } = useDiscovery()
+  const { byId, record, findingsFor, observationsOf, eligibility } = useDiscovery()
   const { factEdits } = useStore()
   const [applying, setApplying] = useState(false)
   const opp = byId[oppId]
   const plan = record(oppId)?.plan
   if (!opp || !plan) return null
   const loc = LOCATION_BY_ID[opp.locationId]
-  const missed = observationsOf(opp).filter((o) => opp.targetPromptIds.includes(o.promptId))
+  const missed = observationsOf(opp).filter((o) => opp.targetPromptIds.includes(o.promptId) && eligibility(opp.locationId, o.promptId).status === 'eligible')
   const findings = findingsFor(opp)
   const facts = buildFacts(opp.locationId, factEdits)
   const targets: Target[] = plan.recommendations.map((r) => ({ id: r.id, label: r.brandTitle, where: r.controlledSource, channel: r.channel }))
   const fixes: Fix[] = plan.recommendations.map((r) => ({ id: r.id, title: r.brandTitle, where: r.controlledSource, channel: r.channel, before: r.currentText, after: r.proposedText, facts: r.businessFactIds.map((id) => facts.find((f) => f.id === id)?.label).filter(Boolean) as string[], note: r.dependency, group: r.geoGroup, technique: r.technique, why: r.whyForAI, basedOn: r.basedOnQuestions, preview: r.preview, evidence: r.evidenceBasis ?? (r.gapConfidence === 'Confirmed gap' ? 'confirmed_gap' : 'hypothesis_to_test'), evidenceText: r.evidenceExplanation, priority: r.priority, priorityReason: r.priorityReason, delivery: r.delivery, limitation: r.aiImpactNote }))
   return (
-    <ProposalShell id={`disc:${oppId}`} type="disc" title={`${loc.name} — help parents find your centre`} status={planStatus(plan.status)} round={plan.round}>
+    <ProposalShell id={`disc:${oppId}`} type="disc" title={`${loc.name} — ${discoveryTitle(opp.targetPromptIds, plan.recommendations.flatMap((r) => findings.find((f) => f.id === r.findingId)?.promptIds ?? []), plan.recommendations.filter((r) => r.delivery !== 'advisory_only').map((r) => r.geoGroup))}`} status={planStatus(plan.status)} round={plan.round}>
       <FindingLine>
         <span className="font-semibold">What we found:</span> not mentioned in {missed.length} relevant sampled recommendation{missed.length === 1 ? '' : 's'} — {missed.map((o) => `“${o.query}”`).join(', ')}. A discovery opportunity, not an AI error.
       </FindingLine>
@@ -589,8 +648,10 @@ function ProposalShell({ id, type, title, status, round, children }: { id: strin
     <div id={id} className="scroll-mt-24">
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-4">
-          <Badge tone={type === 'disc' ? 'teal' : 'blue'}>{type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
-          <h2 className="min-w-0 flex-1 text-[16px] font-semibold text-ink">{title}</h2>
+          <h2 className="min-w-0 flex-1 basis-full text-[16px] font-semibold text-ink sm:basis-auto">
+            <span className="block text-[12px] font-medium text-muted">{type === 'disc' ? 'Discoverability' : 'Accuracy'}</span>
+            {title}
+          </h2>
           <Badge tone={status === 'Awaiting your authorization' ? 'warning' : status.startsWith('Authorized') ? 'success' : 'neutral'}>{status}</Badge>
           <span className="text-[12px] text-muted">v{round}</span>
         </div>
@@ -675,7 +736,7 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
     }
   })
   return (
-    <ProposalShell id={`acc:${issue.id}`} type="acc" title={`${loc.name} — correct ${phrase}`} status={planStatus(plan.status)} round={plan.round}>
+    <ProposalShell id={`acc:${issue.id}`} type="acc" title={`${loc.name} — ${accuracyTitle(issue.field)}`} status={planStatus(plan.status)} round={plan.round}>
       <FindingLine>
         <span className="font-semibold">What we found:</span> “{obs?.query}” — AI said <span className="font-semibold">“{claim?.value}”</span>; your verified record says <span className="font-semibold">“{verified ?? 'not verified'}”</span>.
       </FindingLine>
@@ -706,7 +767,7 @@ function AccuracyProposal({ issue }: { issue: Issue }) {
 
 
 export default function ImprovePage() {
-  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal, publications } = useStore()
+  const { latestAudit, openChapter, release, autoPrepared, optimizeChecked, prepareImprovements, issues, plans, investigations, approvals, selectedGoalId, goals, selectGoal, publications } = useStore()
   const disc = useDiscovery()
   const { views } = useBrandViews()
   const { hash } = useLocation()
@@ -714,12 +775,19 @@ export default function ImprovePage() {
   const [filter, setFilter] = useState<'all' | 'awaiting' | 'authorized' | 'closed'>('all')
   const [typeFilter, setTypeFilter] = useState<'all' | 'disc' | 'acc'>('all')
   const [locFilter, setLocFilter] = useState('all')
+  const navigate = useNavigate()
+  const pickedStore = useRef<Record<string, string[]>>({})
+  const pickedApi = useRef({ get: (k: string) => pickedStore.current[k], set: (k: string, ids: string[]) => { pickedStore.current[k] = ids } }).current
+  // The selected proposal lives in the URL hash, so refresh and back/forward keep it.
+  const open = (key: string) => navigate(`/improve#${encodeURIComponent(key)}`)
   useEffect(() => {
     if (hash) {
       setSel(decodeURIComponent(hash.slice(1)))
-      setFilter('all')
-      setTimeout(() => document.getElementById('proposal-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
-    }
+      setTimeout(() => {
+        const el = document.getElementById('proposal-detail')
+        if (el && el.getBoundingClientRect().top > window.innerHeight * 0.6) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    } else setSel(null)
   }, [hash])
   const first = useRef(release === 'MVP')
   useEffect(() => {
@@ -728,8 +796,8 @@ export default function ImprovePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
-    if (latestAudit && !autoPrepared[latestAudit.id] && release !== 'MVP') prepareImprovements(latestAudit.id)
-  }, [latestAudit, autoPrepared, release, prepareImprovements])
+    if (latestAudit && (!autoPrepared[latestAudit.id] || !optimizeChecked?.[latestAudit.id]) && release !== 'MVP') prepareImprovements(latestAudit.id)
+  }, [latestAudit, autoPrepared, optimizeChecked, release, prepareImprovements])
 
   if (!latestAudit) {
     return (
@@ -747,18 +815,26 @@ export default function ImprovePage() {
   const accNoSource = issues.filter((i) => i.auditId === latestAudit.id && i.category === 'factual_mismatch' && investigations[i.id]?.status === 'completed' && !plans[i.id] && inScope(i.locationId))
   const needsConfirm = disc.latest.filter((o) => o.status === 'eligibility_review' && inScope(o.locationId))
   const awaiting = discPlans.filter((o) => disc.record(o.id)?.plan?.status === 'awaiting_brand_approval').length + accIssues.filter((i) => plans[i.id].status === 'awaiting_brand_approval').length
+  const discTitleOf = (oppId: string) => {
+    const opp = disc.byId[oppId]
+    const plan = disc.record(oppId)?.plan
+    if (!opp || !plan) return 'Make centre information easier to find'
+    const findings = disc.findingsFor(opp)
+    const covered = plan.recommendations.flatMap((r) => findings.find((f) => f.id === r.findingId)?.promptIds ?? [])
+    return discoveryTitle(opp.targetPromptIds, covered, plan.recommendations.filter((r) => r.delivery !== 'advisory_only').map((r) => r.geoGroup))
+  }
   const locs = [...new Set([...discPlans.map((o) => o.locationId), ...accIssues.map((i) => i.locationId)])].sort((a, b) => (a === 'whitefield' ? -1 : b === 'whitefield' ? 1 : a.localeCompare(b)))
   const items = locs.flatMap((locId) => [
     ...discPlans
       .filter((o) => o.locationId === locId)
-      .map((o) => ({ locId, ready: disc.record(o.id)!.plan!.recommendations.filter((r) => r.delivery !== 'advisory_only').length, key: `disc:${o.id}`, type: 'disc' as const, title: `${LOCATION_BY_ID[locId].name} — help parents find your centre`, status: disc.record(o.id)!.plan!.status as string, node: <DiscoveryProposal key={o.id} oppId={o.id} /> })),
+      .map((o) => ({ locId, ready: disc.record(o.id)!.plan!.recommendations.filter((r) => r.delivery !== 'advisory_only').length, key: `disc:${o.id}`, type: 'disc' as const, title: `${LOCATION_BY_ID[locId].name} — ${discTitleOf(o.id)}`, short: discTitleOf(o.id), status: disc.record(o.id)!.plan!.status as string, node: <DiscoveryProposal key={o.id} oppId={o.id} /> })),
     ...accIssues
       .filter((i) => i.locationId === locId)
-      .map((i) => ({ locId, ready: plans[i.id].items.length, key: `acc:${i.id}`, type: 'acc' as const, title: `${LOCATION_BY_ID[locId].name} — correct ${i.field ? (FIELD_PHRASE[i.field] ?? i.field) : 'information'}`, status: plans[i.id].status as string, node: <AccuracyProposal key={i.id} issue={i} /> })),
+      .map((i) => ({ locId, ready: plans[i.id].items.length, key: `acc:${i.id}`, type: 'acc' as const, title: `${LOCATION_BY_ID[locId].name} — ${accuracyTitle(i.field)}`, short: accuracyTitle(i.field), status: plans[i.id].status as string, node: <AccuracyProposal key={i.id} issue={i} /> })),
   ])
-  const current = items.find((i) => i.key === sel) ?? items.find((i) => i.status === 'awaiting_brand_approval') ?? items[0]
-  // Keep the proposal you're looking at selected, even after its status changes.
-  if (!sel && current) queueMicrotask(() => setSel(current.key))
+  // The URL hash (stable proposal ID) wins, so refresh and back/forward always show the same proposal.
+  const hashKey = hash ? decodeURIComponent(hash.slice(1)) : null
+  const current = items.find((i) => i.key === (hashKey ?? sel)) ?? items.find((i) => i.key === sel) ?? items.find((i) => i.status === 'awaiting_brand_approval') ?? items[0]
   // How Detect's findings map onto this page, counted the same way Detect counts them.
   const accViews = views.filter((v) => v.issue.auditId === latestAudit.id && v.stage !== 'not_an_issue' && inScope(v.issue.locationId))
   const noSourceIds = new Set(accNoSource.map((i) => i.id))
@@ -776,6 +852,8 @@ export default function ImprovePage() {
   const covered = discCovered + accIssues.length
   const checkedNoChange = discNoGap + accNoSource.length
   const needsInput = discRelevance + accNeedsInput.length
+  // Keep the proposal you're looking at selected, even after its status changes (no URL change, so mobile stays on the list).
+  if (!sel && current) queueMicrotask(() => setSel(current.key))
   const taskKeys = new Set(items.map((i) => i.key))
   const latestByTask = Object.values(Object.fromEntries(publications.filter((p) => taskKeys.has(p.proposalKey)).map((p) => [p.taskId, p])))
 
@@ -829,7 +907,7 @@ export default function ImprovePage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-          <Card className="scrollbar-thin self-start xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto">
+          <Card className={cn('scrollbar-thin self-start xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto', hash && 'hidden xl:block')}>
             <CardHeader title="Proposals" description="Grouped by location · one queue for both finding types" />
             <div className="border-b border-line px-4 py-2.5">
               <Segmented
@@ -876,39 +954,75 @@ export default function ImprovePage() {
               if (!visible.length) return <p className="px-4 py-4 text-[13.5px] text-body">No proposals match these filters.</p>
               return [...new Set(visible.map((i) => i.locId))].map((locId) => {
                 const group = visible.filter((i) => i.locId === locId)
-                const ready = group.filter((i) => i.status === 'awaiting_brand_approval').reduce((n, i) => n + i.ready, 0)
+                const waiting = group.filter((i) => i.status === 'awaiting_brand_approval').length
                 return (
-                  <div key={locId}>
-                    <p className="border-b border-line bg-subtle/60 px-4 py-1.5 text-[12.5px] text-body">
-                      <span className="font-semibold text-ink">{LOCATION_BY_ID[locId].name}</span> · {group.length} proposal{group.length === 1 ? '' : 's'}
-                      {ready ? ` · ${ready} change${ready === 1 ? '' : 's'} ready for your approval` : ''}
+                  <div key={locId} className="border-b border-line last:border-b-0">
+                    <p className="flex items-center gap-2 bg-subtle/70 px-4 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted">
+                      <span className="text-ink">{LOCATION_BY_ID[locId].name}</span>
+                      {waiting ? <span className="ml-auto font-medium normal-case tracking-normal text-warning">{waiting} awaiting approval</span> : null}
                     </p>
-                    <ul className="divide-y divide-line">
-                      {group.map((i) => (
-                        <li key={i.key}>
-                          <button onClick={() => setSel(i.key)} aria-current={current?.key === i.key} className={cn('flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-subtle', current?.key === i.key && 'bg-brand-soft/50')}>
-                            <span className="flex items-center gap-2">
-                              <Badge tone={i.type === 'disc' ? 'teal' : 'blue'}>{i.type === 'disc' ? 'Discoverability' : 'Accuracy'}</Badge>
-                              <Badge tone={i.status === 'awaiting_brand_approval' ? 'warning' : i.status === 'approved' ? 'success' : 'neutral'}>{planStatus(i.status)}</Badge>
-                            </span>
-                            <span className="text-[14px] font-medium text-ink">{i.title}</span>
-                          </button>
-                        </li>
-                      ))}
+                    <ul>
+                      {group.map((i) => {
+                        const active = current?.key === i.key
+                        return (
+                          <li key={i.key}>
+                            <button
+                              onClick={() => open(i.key)}
+                              aria-current={active ? 'true' : undefined}
+                              aria-label={i.title}
+                              className={cn('relative flex w-full items-start gap-2.5 px-4 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/60', active ? 'bg-brand-soft' : 'hover:bg-subtle')}
+                            >
+                              {active && <span className="absolute inset-y-0 left-0 w-[3px] bg-brand" />}
+                              <span className="min-w-0 flex-1">
+                                <span className={cn('block text-[14px]', active ? 'font-semibold text-brand' : 'font-medium text-ink')}>{i.short}</span>
+                                <span className="block text-[12px] text-muted">
+                                  {i.type === 'disc' ? 'Discoverability' : 'Accuracy'} · {i.ready} change{i.ready === 1 ? '' : 's'}
+                                  {i.status !== 'awaiting_brand_approval' && <span className={cn('ml-1 font-medium', i.status === 'approved' ? 'text-success' : 'text-body')}>· {planStatus(i.status)}</span>}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
                     </ul>
                   </div>
                 )
               })
             })()}
           </Card>
-          <div id="proposal-detail" className="min-w-0 scroll-mt-24">
-            {current?.node}
+          <div id="proposal-detail" className={cn('min-w-0 scroll-mt-24', !hash && 'hidden xl:block')}>
+            {(() => {
+              const order = items.filter((i) => (typeFilter === 'all' || i.type === typeFilter) && (locFilter === 'all' || i.locId === locFilter))
+              const idx = order.findIndex((i) => i.key === current?.key)
+              const prev = idx > 0 ? order[idx - 1] : null
+              const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null
+              return (
+                <div className="mb-3 flex items-center gap-2 text-[13px]">
+                  <Button size="sm" variant="ghost" className="xl:hidden" onClick={() => navigate('/improve')}>
+                    <ChevronLeft />
+                    All proposals
+                  </Button>
+                  <span className="hidden text-muted xl:inline">{current ? `${LOCATION_BY_ID[current.locId].name} · proposal ${idx + 1} of ${order.length}` : ''}</span>
+                  <span className="ml-auto flex gap-1">
+                    <Button size="sm" variant="ghost" disabled={!prev} onClick={() => prev && open(prev.key)} aria-label="Previous proposal">
+                      <ChevronLeft />
+                      Previous
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={!next} onClick={() => next && open(next.key)} aria-label="Next proposal">
+                      Next
+                      <ChevronRight />
+                    </Button>
+                  </span>
+                </div>
+              )
+            })()}
+            <PickedCtx.Provider value={pickedApi}>{current?.node}</PickedCtx.Provider>
           </div>
         </div>
       )}
       {(noGap.length > 0 || accNoSource.length > 0) && (
         <Card>
-          <CardHeader title="No confirmed, controllable gap found" description="No supported change recommended yet — ProManage keeps monitoring these" />
+          <CardHeader title="No fix identified" description="ProManage checked these and found no justified change yet. They are re-checked whenever you run a follow-up in Measure." />
           <ul className="divide-y divide-line">
             {noGap.map((o) => (
               <li key={o.id} className="px-5 py-3 text-[13.5px]">

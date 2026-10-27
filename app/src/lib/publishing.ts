@@ -29,7 +29,7 @@ const SEEDED_FAILURES: Record<string, string> = {
 export function targetPermission(t: Pick<Task, 'channel' | 'recommendationId' | 'locationId'>): { permission: TargetPermission; reason: string } {
   if (t.channel === 'external_request') return { permission: 'third_party_unmanaged', reason: 'Independent site — ProManage can send a correction request; the site owner decides.' }
   if (t.channel === 'verification') return { permission: 'unsupported', reason: 'Business-fact verification is a Brand decision, not a publication.' }
-  if (t.recommendationId === 'rec-freshness-sitemap' || t.recommendationId === 'rec-geo-ai-crawlers') return { permission: 'requires_site_admin', reason: 'Sitemap and crawler settings need your site administrator; ProManage won’t change them automatically.' }
+  if (t.recommendationId === 'rec-freshness-sitemap' || t.recommendationId === 'rec-geo-ai-crawlers' || t.recommendationId === 'rec-opt-sitemap-missing') return { permission: 'requires_site_admin', reason: 'Sitemap and crawler settings need your site administrator; ProManage won’t change them automatically.' }
   if (t.channel === 'managed_listing') return { permission: 'connected_authorized', reason: 'Managed through ProManage Listing Management (simulated connector).' }
   return { permission: 'connected_authorized', reason: 'Centre page connected to ProManage’s CMS integration (simulated).' }
 }

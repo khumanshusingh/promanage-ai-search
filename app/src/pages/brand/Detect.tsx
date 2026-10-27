@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import * as DM from '@radix-ui/react-dropdown-menu'
-import { AlertCircle, ArrowRight, FileDown, CheckCircle2, CircleDashed, Compass, FileSearch, Lightbulb, XCircle, FileText, Loader2, MapPin, MessageSquareText, MoreHorizontal, PlayCircle, Plus, ScanSearch, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, FileDown, CheckCircle2, CircleDashed, Compass, FileSearch, Lightbulb, XCircle, Loader2, MapPin, MessageSquareText, MoreHorizontal, PlayCircle, Plus, ScanSearch, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 import type { Observation } from '@/data/types'
@@ -13,7 +13,6 @@ import { discoveryId, type EligibilityView } from '@/lib/discovery'
 import { runSimulatedAudit } from '@/services/mockAuditService'
 import { EvidenceDisclosure, StageBadge } from '@/components/brand'
 import { NotAnErrorNote, RelevanceControls } from '@/components/discovery'
-import { FocusOnQuestion } from '@/components/goals'
 import { ReportDialog } from '@/components/report'
 import { HowItWorks } from '@/components/howItWorks'
 import { useReportSnapshot } from '@/lib/useReportSnapshot'
@@ -44,9 +43,10 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel, asSheet = 
   const [locQ, setLocQ] = useState('')
   const locs = detectLocationIds ?? PILOT_IDS
   const prompts = detectPromptIds ?? STANDARD_PROMPTS
-  const [edit, setEdit] = useState<null | 'questions' | 'locations'>(initialEdit)
+  // Questions and locations can be open at the same time.
+  const [edit, setEdit] = useState<{ questions: boolean; locations: boolean }>({ questions: initialEdit === 'questions', locations: initialEdit === 'locations' })
   useEffect(() => {
-    if (open) setEdit(initialEdit)
+    if (open) setEdit({ questions: initialEdit === 'questions', locations: initialEdit === 'locations' })
   }, [open, initialEdit])
   const [tab, setTab] = useState<'disc' | 'acc'>('disc')
   const example = LOCATION_BY_ID.whitefield
@@ -78,8 +78,8 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel, asSheet = 
         <p className="text-[14px] font-semibold text-ink">{title}</p>
         <p className="text-[13px] text-body">{summary}</p>
       </div>
-      <Button size="sm" variant={edit === key ? 'secondary' : 'ghost'} onClick={() => setEdit(edit === key ? null : key)} aria-expanded={edit === key}>
-        {edit === key ? 'Done' : key === 'questions' ? 'Change questions' : 'Change locations'}
+      <Button size="sm" variant={edit[key] ? 'secondary' : 'ghost'} onClick={() => setEdit((e) => ({ ...e, [key]: !e[key] }))} aria-expanded={edit[key]} aria-label={edit[key] ? `Done changing ${key}` : undefined}>
+        {edit[key] ? 'Done' : key === 'questions' ? 'Change questions' : 'Change locations'}
       </Button>
     </div>
   )
@@ -106,7 +106,16 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel, asSheet = 
     >
       <div className="divide-y divide-line rounded-xl border border-line">
         {row('Questions parents may ask', `${nDisc} discoverability (unbranded) · ${nAcc} information accuracy (branded)${nCustom ? ` · ${nCustom} your own` : ''} · curated by ProManage, not search-volume data`, 'questions')}
-        {edit === 'questions' && (
+        {!edit.questions && (
+          <div className="mx-4 mb-3 rounded-lg bg-subtle/70 px-3 py-2">
+            <p className="text-[12.5px] font-medium text-ink">Questions automatically adapt to each centre</p>
+            <p className="text-[13.5px] text-body">
+              Best preschools in <span className="font-semibold text-brand">{'{location}'}</span>?
+            </p>
+            <p className="text-[12px] text-muted">For example: {locs.slice(0, 3).map((id) => LOCATION_BY_ID[id]?.neighborhood).filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' or $1')}</p>
+          </div>
+        )}
+        {edit.questions && (
           <div className="space-y-2 bg-subtle/60 px-4 py-3">
             <Segmented
               ariaLabel="Question type"
@@ -151,7 +160,7 @@ function ReviewCheckDialog({ open, onOpenChange, onStart, startLabel, asSheet = 
           </div>
         )}
         {row('Locations', `${locs.length} of 150 centres · ${locs.length === PILOT_IDS.length && PILOT_IDS.every((x) => locs.includes(x)) ? 'Bengaluru pilot' : 'custom selection'}`, 'locations')}
-        {edit === 'locations' && (
+        {edit.locations && (
           <div id="locations" className="bg-subtle/60 px-4 py-3">
             <div className="mb-2 flex gap-1">
               <Button size="sm" variant="ghost" onClick={() => setDetectLocations(PILOT_IDS)}>
@@ -226,7 +235,7 @@ const TIER: Record<Tier, { label: string; tone: 'danger' | 'teal' | 'warning' | 
   fix: { label: 'Fix first', tone: 'danger', rank: 0 },
   opportunity: { label: 'Opportunity', tone: 'teal', rank: 1 },
   input: { label: 'Confirm before fixing', tone: 'warning', rank: 2 },
-  monitor: { label: 'Monitoring', tone: 'neutral', rank: 3 },
+  monitor: { label: 'No fix identified', tone: 'neutral', rank: 3 },
 }
 const NO_FIX_NOTE = {
   disc: 'ProManage checked the information it manages for this centre and found nothing it can change. AI tools choose their own recommendations; ProManage keeps monitoring.',
@@ -237,11 +246,11 @@ const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const
 function priorityOf(f: Finding, hasFix: boolean): { tier: Tier; reason: string } {
   if (f.kind === 'acc') {
     const k = accKind(f)
-    if (k === 'confirmed') return hasFix ? { tier: 'fix', reason: `Contradicts your verified record${f.v.issue.severity === 'high' ? ' · high impact' : ''}` } : { tier: 'monitor', reason: 'Wrong, but no source we can correct' }
+    if (k === 'confirmed') return hasFix ? { tier: 'fix', reason: `Contradicts your verified record${f.v.issue.severity === 'high' ? ' · high impact' : ''}` } : { tier: 'monitor', reason: 'Wrong, but your sources are already correct' }
     return { tier: 'input', reason: k === 'verify' ? 'Your record isn’t verified yet' : k === 'confusion' ? `AI may be mixing it up with ${f.v.issue.entityConfusion}` : 'No specific fact to check' }
   }
   if (f.el.status !== 'eligible') return { tier: 'input', reason: 'Confirm the question fits' }
-  return hasFix ? { tier: 'opportunity', reason: 'Fits this centre, not mentioned' } : { tier: 'monitor', reason: 'No source ProManage can change' }
+  return hasFix ? { tier: 'opportunity', reason: 'Fits this centre, not mentioned' } : { tier: 'monitor', reason: 'Facts correct · no justified change found' }
 }
 /** The one next step for a finding, and where it leads. */
 function nextActionOf(f: Finding, hasFix: boolean): { label: string; short: string; to?: string; note: string } {
@@ -283,7 +292,7 @@ function FindingDetail({ f, onClose, hasFix }: { f: Finding; onClose: () => void
   const label = 'text-[12px] font-medium uppercase tracking-[0.05em] text-muted'
   return (
     // Pinned beside the table on wide screens, so it scrolls on its own when the AI answer is long.
-    <Card className="scrollbar-thin self-start xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto">
+    <Card className="scrollbar-thin self-start border-brand-line shadow-[0_0_0_1px_rgba(42,94,254,0.12)] xl:sticky xl:top-[84px] xl:max-h-[calc(100vh-100px)] xl:overflow-y-auto">
       <div className="flex items-start justify-between gap-3 px-5 pt-4">
         <div className="min-w-0">
           <p className="text-[12.5px] text-muted">
@@ -372,7 +381,7 @@ function FindingDetail({ f, onClose, hasFix }: { f: Finding; onClose: () => void
 }
 
 function Results() {
-  const { latestAudit, observationsFor, promptsById, goals, selectedGoalId, selectGoal, autoPrepared, prepareImprovements, plans } = useStore()
+  const { latestAudit, observationsFor, promptsById, goals, selectedGoalId, selectGoal, autoPrepared, optimizeChecked, prepareImprovements, plans } = useStore()
   const { views } = useBrandViews()
   const disc = useDiscovery()
   const audit = latestAudit!
@@ -390,8 +399,8 @@ function Results() {
   const navigate = useNavigate()
   // ProManage prepares proposals automatically after the check (simulated), so each finding can say whether a fix exists.
   useEffect(() => {
-    if (!autoPrepared[audit.id]) prepareImprovements(audit.id)
-  }, [audit.id, autoPrepared, prepareImprovements])
+    if (!autoPrepared[audit.id] || !optimizeChecked?.[audit.id]) prepareImprovements(audit.id)
+  }, [audit.id, autoPrepared, optimizeChecked, prepareImprovements])
   const hasFix = (f: Finding) => (f.kind === 'disc' ? !!(f.oppId && disc.record(f.oppId)?.plan) : !!plans[f.v.issue.id])
   useEffect(() => setLoc(goal?.locationIds[0] ?? 'all'), [goal])
   const accViews = useMemo(() => views.filter((v) => v.issue.auditId === audit.id && v.stage !== 'not_an_issue'), [views, audit.id])
@@ -556,8 +565,17 @@ function Results() {
                   const pr = priorityOf(f, hasFix(f))
                   const act = nextActionOf(f, hasFix(f))
                   return (
-                  <Tr key={f.key} onClick={() => setSelected(f.key)} className={cn(selected === f.key && 'bg-brand-soft/40')}>
-                    <Td className="whitespace-nowrap">
+                  <Tr
+                    key={f.key}
+                    onClick={() => setSelected(f.key)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(f.key) } }}
+                    tabIndex={0}
+                    aria-selected={selected === f.key}
+                    data-selected={selected === f.key || undefined}
+                    className={cn('outline-none focus-visible:bg-[#f1f5ff]', selected === f.key && 'bg-brand-soft hover:bg-brand-soft')}
+                  >
+                    <Td className="relative whitespace-nowrap">
+                      {selected === f.key && <span className="absolute inset-y-0 left-0 w-[3px] bg-brand" aria-hidden />}
                       <Badge tone={TIER[pr.tier].tone}>{TIER[pr.tier].label}</Badge>
                       <span className="mt-1 block max-w-[190px] whitespace-normal text-[11.5px] leading-snug text-muted">{pr.reason}</span>
                     </Td>
@@ -565,7 +583,7 @@ function Results() {
                     <Td>
                       <Badge tone={f.kind === 'disc' ? 'teal' : 'blue'}>{f.kind === 'disc' ? 'Discovery opportunity' : 'Accuracy finding'}</Badge>
                     </Td>
-                    <Td className="min-w-[220px] text-[13.5px] text-ink">“{f.obs?.query}”</Td>
+                    <Td className={cn('min-w-[220px] text-[13.5px]', selected === f.key ? 'font-semibold text-brand' : 'text-ink')}>“{f.obs?.query}”</Td>
                     <Td className="text-[13px] text-body">
                       {f.kind === 'disc' ? (
                         <>
@@ -588,8 +606,8 @@ function Results() {
                       )}
                     </Td>
                     <Td className="whitespace-nowrap text-right">
-                      <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setSelected(f.key) }}>
-                        Details
+                      <Button size="sm" variant={selected === f.key ? 'secondary' : 'ghost'} aria-pressed={selected === f.key} className={cn(selected === f.key && 'text-brand')} onClick={(e) => { e.stopPropagation(); setSelected(f.key) }}>
+                        {selected === f.key ? 'Viewing' : 'Details'}
                       </Button>
                       <Button size="sm" variant="ghost" className="text-brand" onClick={(e) => { e.stopPropagation(); if (act.to) navigate(act.to); else setSelected(f.key) }}>
                         {act.short}
@@ -615,24 +633,6 @@ function Results() {
         to="/improve"
         cta="Review and approve fixes"
       />
-      <FocusOnQuestion />
-      <div className="flex flex-wrap gap-2">
-        <Button asChild>
-          <Link to={`/audits/${audit.id}`}>
-            <ScanSearch />
-            View all evidence
-          </Link>
-        </Button>
-        <Button asChild>
-          <Link to="/reports">
-            <FileText />
-            CSV & print exports
-          </Link>
-        </Button>
-        <Button asChild>
-          <Link to="/locations">All locations</Link>
-        </Button>
-      </div>
     </div>
   )
 }

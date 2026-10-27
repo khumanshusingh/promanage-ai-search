@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Clock, FileText, Loader2, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Clock, Loader2, RadioTower, ScanSearch, ShieldCheck, TrendingUp } from 'lucide-react'
 import { hasMismatch, isDiscovery } from '@/lib/metrics'
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
@@ -128,8 +128,12 @@ function DeltaCard({ title, subtitle, series, betterWhen, unit, icon, color }: {
 const RUN_STEPS = ['Preparing your previous questions', 'Checking sampled AI answers (simulated)', 'Comparing discoverability', 'Checking information accuracy', 'Preparing your results']
 
 /** One row per published or handed-off source change, expandable to show what changed and when. */
-function ChangesTable({ rows, tasks }: { rows: PublicationAttempt[]; tasks: Task[] }) {
+function ChangesTable({ rows: all, tasks }: { rows: PublicationAttempt[]; tasks: Task[] }) {
   const [open, setOpen] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  // Changes that need attention first, then published; long lists start collapsed.
+  const sorted = [...all].sort((a, b) => Number(a.state === 'success') - Number(b.state === 'success'))
+  const rows = showAll ? sorted : sorted.slice(0, 5)
   if (!rows.length) return <p className="px-5 py-4 text-[13.5px] text-body">No source changes have been recorded yet.</p>
   return (
     <Table>
@@ -190,12 +194,23 @@ function ChangesTable({ rows, tasks }: { rows: PublicationAttempt[]; tasks: Task
           )
         })}
       </tbody>
+      {all.length > 5 && (
+        <tfoot>
+          <tr>
+            <td colSpan={4} className="px-5 py-2.5">
+              <button className="text-[13px] font-medium text-brand hover:underline" onClick={() => setShowAll(!showAll)}>
+                {showAll ? 'Show fewer' : `Show all ${all.length} changes`}
+              </button>
+            </td>
+          </tr>
+        </tfoot>
+      )}
     </Table>
   )
 }
 
 export default function MeasurePage() {
-  const { latestAudit, openChapter, release, autoPrepared, prepareImprovements, approvals, publications, tasks, issues, plans, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
+  const { latestAudit, openChapter, release, autoPrepared, optimizeChecked, prepareImprovements, approvals, publications, tasks, issues, plans, rechecksFor, runRecheck, selectedGoalId, goals, selectGoal, observationsFor, promptsById } = useStore()
   const disc = useDiscovery()
   const first = useRef(release !== 'V2')
   const [running, setRunning] = useState<number | null>(null)
@@ -207,8 +222,8 @@ export default function MeasurePage() {
   }, [])
   useEffect(() => {
     // Opening Measure also makes V1 capability available: preparing proposals only. Nothing is approved, published or rechecked.
-    if (latestAudit && !autoPrepared[latestAudit.id] && release === 'V2') prepareImprovements(latestAudit.id)
-  }, [latestAudit, autoPrepared, release, prepareImprovements])
+    if (latestAudit && (!autoPrepared[latestAudit.id] || !optimizeChecked?.[latestAudit.id]) && release === 'V2') prepareImprovements(latestAudit.id)
+  }, [latestAudit, autoPrepared, optimizeChecked, release, prepareImprovements])
 
   if (!latestAudit) {
     return (
@@ -278,13 +293,16 @@ export default function MeasurePage() {
   }
 
   const scope = (
-    <ul className="grid grid-cols-1 gap-x-6 gap-y-1 text-[13px] text-body sm:grid-cols-2">
-      <li><span className="text-muted">Locations:</span> {latestAudit.locationIds.length} centres ({latestAudit.locationIds.map((id) => LOCATION_BY_ID[id].neighborhood).join(', ')})</li>
-      <li><span className="text-muted">Questions:</span> the same {latestAudit.promptIds.length} questions per centre ({latestAudit.locationIds.length * latestAudit.promptIds.length} sampled answers)</li>
-      <li><span className="text-muted">AI search surface:</span> demo AI search (Surface A), as in the original check</li>
-      <li><span className="text-muted">Original check:</span> {fmtDateTime(latestAudit.createdAt)}</li>
-      <li className="sm:col-span-2 text-muted">Results are simulated in this prototype; no real AI service is queried.</li>
-    </ul>
+    <div className="text-[13px] text-body">
+      <p>
+        {latestAudit.locationIds.length} centres · the same {latestAudit.promptIds.length} questions per centre ({latestAudit.locationIds.length * latestAudit.promptIds.length} sampled answers) · demo AI search (Surface A) · original check {fmtDateTime(latestAudit.createdAt)}
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[12.5px] font-medium text-brand">Which centres?</summary>
+        <p className="mt-1 text-[12.5px]">{latestAudit.locationIds.map((id) => LOCATION_BY_ID[id].neighborhood).join(', ')}</p>
+      </details>
+      <p className="mt-1 text-[12px] text-muted">Results are simulated in this prototype; no real AI service is queried.</p>
+    </div>
   )
 
   const runPanel = (again: boolean) => (
@@ -306,7 +324,8 @@ export default function MeasurePage() {
           </ol>
         </div>
       ) : (
-        <>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+          <div className="min-w-0 flex-1">
           <p className="text-[18px] font-semibold text-ink">{again ? 'Run another follow-up check' : 'Ready to see if your AI visibility has improved?'}</p>
           <p className="mt-1 text-[14px] text-body">We’ll repeat your previous AI search questions for the same locations and compare the new results with your original check.</p>
           {(attention.length > 0 || awaitingChanges > 0) && (
@@ -315,12 +334,13 @@ export default function MeasurePage() {
               This check reflects only the {successes.length} change{successes.length === 1 ? '' : 's'} published so far. {attention.length ? `${attention.length} need attention` : ''}{attention.length && awaitingChanges ? ' and ' : ''}{awaitingChanges ? `${awaitingChanges} still await your authorization` : ''}.
             </p>
           )}
-          <div className="mt-3 rounded-lg border border-line bg-surface px-4 py-3">{scope}</div>
-          <Button variant="primary" size="lg" className="mt-4 h-12 px-6 text-[15px] shadow-pop" onClick={runFollowUp}>
+          <div className="mt-3">{scope}</div>
+          </div>
+          <Button variant="primary" size="lg" className="h-12 shrink-0 self-start px-6 text-[15px] shadow-pop lg:self-center" onClick={runFollowUp}>
             <RadioTower />
             {again ? 'Run another follow-up check' : 'Run Follow-up AI Visibility Check'}
           </Button>
-        </>
+        </div>
       )}
     </Card>
   )
@@ -346,12 +366,20 @@ export default function MeasurePage() {
         title="Measure your improvements"
         subtitle="Review what ProManage updated, then run another AI visibility check to see whether the answers have changed."
         actions={
-          <Button asChild>
-            <Link to="/improve">
-              <ArrowLeft />
-              Back to fixes
-            </Link>
-          </Button>
+          <>
+            <Button asChild>
+              <Link to="/improve">
+                <ArrowLeft />
+                Back to fixes
+              </Link>
+            </Button>
+            {wave && running === null && (
+              <Button variant="primary" onClick={runFollowUp}>
+                <RadioTower />
+                Run another follow-up check
+              </Button>
+            )}
+          </>
         }
       />
       {goal && (
@@ -373,9 +401,9 @@ export default function MeasurePage() {
         </Card>
       ) : !wave ? (
         <>
+          {runPanel(false)}
           {progressCards}
           {changesCard}
-          {runPanel(false)}
         </>
       ) : (
         <>
@@ -475,18 +503,6 @@ export default function MeasurePage() {
 
           {changesCard}
 
-          {attention.length > 0 && (
-            <Card>
-              <CardHeader title="Still open" description="Not marked updated · ProManage, your site admin or an external owner has the next step" />
-              <ul className="divide-y divide-line">
-                {attention.map((p) => (
-                  <li key={p.id} className="px-5 py-2.5 text-[13.5px]">
-                    <span className="font-medium text-ink">{tasks.find((t) => t.id === p.taskId)?.title}</span> · <Badge tone={STATE_LABEL[p.state].tone}>{STATE_LABEL[p.state].label}</Badge> <span className="text-body">{p.detail}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
 
           <Card>
             <CardHeader title="Check history" description="Every check is kept; nothing is overwritten" />
@@ -520,53 +536,13 @@ export default function MeasurePage() {
             </Table>
           </Card>
 
-          {running === null && runPanel(true)}
         </>
       )}
 
-      {(approvedKeys.size > 0 || rechecks.length > 0) && (
-        <Card>
-          <CardHeader title="Timeline" description="Standard check → proposals → your authorization → publication → follow-up checks you ran" />
-          <ol className="space-y-2 px-5 py-4 text-[13.5px]">
-            {[
-              { at: latestAudit.createdAt, text: `Standard AI Visibility Check · ${latestAudit.locationIds.length} centres (simulated)` },
-              { at: autoPrepared[latestAudit.id], text: 'ProManage investigated managed sources and prepared proposals (simulated)' },
-              ...approvals.filter((a) => a.action === 'approve').map((a) => ({ at: a.at, text: `You authorized ${a.approvedTargetIds.length} target${a.approvedTargetIds.length === 1 ? '' : 's'} · ${a.proposalKey.startsWith('disc') ? 'Discoverability' : 'Accuracy'} · ${a.proposalKey.startsWith('disc') ? LOCATION_BY_ID[parseOpp(a.proposalKey.slice(5)).locationId]?.name : LOCATION_BY_ID[issues.find((i) => `acc:${i.id}` === a.proposalKey)?.locationId ?? '']?.name} · version ${a.approvedVersion}` })),
-              ...mine.filter((p) => p.state === 'success').map((p) => ({ at: p.recordedAt, text: `Source updated (simulated): ${tasks.find((t) => t.id === p.taskId)?.title}` })),
-              ...rechecks.map((r) => ({ at: r.sampledAt, text: `You ran follow-up check ${r.wave} (simulated) · same questions and centres` })),
-            ]
-              .filter((e) => e.at)
-              .sort((a, b) => a.at!.localeCompare(b.at!))
-              .map((e, i) => (
-                <li key={i} className="flex gap-3">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-teal-ink" />
-                  <span className="text-ink">
-                    {e.text} <span className="text-muted">· {fmtDateTime(e.at!)}</span>
-                  </span>
-                </li>
-              ))}
-          </ol>
-        </Card>
-      )}
 
       {approvedKeys.size > 0 && awaitingProposals > 0 && (
         <NextStep chapter="02 Improve" title={`${awaitingProposals} more proposal${awaitingProposals === 1 ? '' : 's'} still need your decision`} description="Approve the remaining fixes, then run another follow-up check to include them." to="/improve" cta="Review remaining fixes" />
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button asChild>
-          <Link to="/reports">
-            <FileText />
-            Download report
-          </Link>
-        </Button>
-        <Button asChild>
-          <Link to={`/audits/${latestAudit.id}`}>
-            <ScanSearch />
-            View original evidence
-          </Link>
-        </Button>
-        <p className="self-center text-[12.5px] text-muted">We can’t promise future recommendations or prove what caused an AI answer to change.</p>
-      </div>
     </div>
   )
 }

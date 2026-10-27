@@ -807,6 +807,166 @@ const SEEDS: Record<string, FindingSeed[]> = {
 // The centres with confirmed, controllable gaps also get the GEO content playbook (Whitefield gets the full set).
 for (const [id, prompts, rich] of [['whitefield', ['p5', 'p2', 'p1'], true], ['hsr-layout', ['p3'], false], ['indiranagar', ['p1'], false], ['jayanagar', ['p1', 'p3'], false]] as const) SEEDS[id].push(...geoSeeds([...prompts], rich))
 
+/*
+  Optimize findings for centres whose facts are already correct (previously "Monitoring").
+  Each is backed by a simulated source snapshot and uses verified facts only; whether it changes
+  an AI answer is a hypothesis to test, never a promise. Koramangala keeps "No fix identified".
+*/
+const OPT = (o: { evidence: string; priority: 'high' | 'medium' | 'low'; why: string; reason: string; delivery?: 'connected_publish' | 'site_admin_handoff' }) => ({
+  evidenceBasis: 'confirmed_gap' as const,
+  evidenceExplanation: `${o.evidence} Whether this is why AI left the centre out is a possible factor to test, not a confirmed cause.`,
+  priority: o.priority,
+  priorityReason: o.reason,
+  delivery: o.delivery ?? ('connected_publish' as const),
+  whyForAI: o.why,
+  aiImpactNote: 'Clearer, accurate information for parents and AI systems. It does not guarantee any AI assistant will mention the centre.',
+})
+const daycareAnswer = (key: string, loc: string, snapshot: string, observation: string, promptIds: string[]): FindingSeed => ({
+  key,
+  category: 'content',
+  surface: 'web',
+  sourceOwner: 'brand',
+  promptIds,
+  certainty: 'confirmed_gap',
+  needs: [{ key: 'programs', contains: 'daycare' }, { key: 'hours' }],
+  observation,
+  snapshot,
+  recommend: (f, l) => ({
+    channel: 'owned_website',
+    controlledSource: `Centre page — ${f.website}`,
+    owner: 'BrightNest website team',
+    title: `Answer daycare and extended-hours questions on the ${loc} centre page`,
+    brandTitle: `Answer “Do you offer daycare and extended hours?” on the ${loc} page`,
+    currentText: snapshot,
+    proposedText: `BrightNest ${l.neighborhood} is a preschool at ${f.address}, offering ${f.programs}.\n\nDoes BrightNest ${l.neighborhood} offer daycare and extended hours?\nYes. Daycare runs alongside the classes, and the centre is open ${f.hours}.`,
+    businessFactIds: ['address', 'programs', 'hours'].map((k) => factId(l.id, k as FactKey)),
+    requiresBrandApproval: true,
+    effort: 'Small',
+    geoGroup: 'content',
+    technique: 'Direct answer to a parent question',
+    basedOnQuestions: questionsFor(l, promptIds),
+    ...OPT({ evidence: `Centre-page snapshot (14 Oct 2026): “${snapshot}”. Daycare and opening hours are verified in the business record but not answered on the page.`, priority: 'high', reason: 'Answers a question parents asked, using verified facts', why: 'Parents asked about daycare and hours. A direct question-and-answer gives AI a clear, quotable sentence.' }),
+  }),
+})
+
+const OPTIMIZE_SEEDS: Record<string, FindingSeed[]> = {
+  bellandur: [
+    daycareAnswer('opt-daycare', 'Bellandur', 'Admissions open for 2026–27. Enquire now!', 'The page is a single admissions banner. It doesn’t say what the centre offers, where it is, or that it runs daycare.', ['p1', 'p3']),
+    {
+      key: 'opt-listing-attributes',
+      category: 'listing',
+      surface: 'listing',
+      sourceOwner: 'promanage_managed',
+      promptIds: ['p3'],
+      certainty: 'confirmed_gap',
+      needs: [{ key: 'programs', contains: 'daycare' }, { key: 'hours' }],
+      observation: 'The managed listing has no service attributes, so Daycare isn’t listed.',
+      snapshot: 'Services: (none listed)',
+      recommend: (f, l) => ({
+        channel: 'managed_listing',
+        controlledSource: 'Google Business Profile — ProManage Listing Management',
+        owner: 'ProManage',
+        title: 'Add the verified services to the managed listing',
+        brandTitle: 'List your verified services, including Daycare, on Google Business Profile',
+        currentText: 'Services: (none listed)',
+        proposedText: `Services: ${f.programs!.split(',').map((x) => x.trim()).join(' · ')}`,
+        businessFactIds: [factId(l.id, 'programs')],
+        requiresBrandApproval: true,
+        effort: 'Small',
+        geoGroup: 'information',
+        technique: 'Complete listing attributes',
+        basedOnQuestions: questionsFor(l, ['p3']),
+        ...OPT({ evidence: 'Managed listing snapshot shows no service attributes; the verified record lists the programmes and Daycare.', priority: 'high', reason: 'A missing verified service on a source ProManage manages', why: 'AI systems cross-check listings. A listing with no services gives them nothing to match a daycare question to.' }),
+      }),
+    },
+  ],
+  brookefield: [
+    {
+      key: 'opt-internal-links',
+      category: 'content',
+      surface: 'web',
+      sourceOwner: 'brand',
+      promptIds: ['p1'],
+      certainty: 'confirmed_gap',
+      observation: 'The Brookefield centre page isn’t linked from the Bengaluru centres list or from any programme page.',
+      snapshot: 'Bengaluru centres page lists 9 centres; Brookefield is missing. No programme page links to it.',
+      recommend: (f, l) => ({
+        channel: 'owned_website',
+        controlledSource: 'Bengaluru centres list and programme pages — brightnest.example',
+        owner: 'BrightNest website team',
+        title: 'Link the Brookefield page from the Bengaluru centres list and programme pages',
+        brandTitle: 'Link your Brookefield page from the Bengaluru centres list',
+        currentText: 'Bengaluru centres: Whitefield, HSR Layout, Koramangala, Indiranagar, Sarjapur, Jayanagar, Bellandur, Electronic City, Marathahalli',
+        proposedText: `Bengaluru centres: … · Brookefield (${f.address}) → ${f.website}\nProgramme pages: add “Available at BrightNest ${l.neighborhood}” with a link to the centre page.`,
+        businessFactIds: [factId(l.id, 'address'), factId(l.id, 'website')],
+        requiresBrandApproval: true,
+        effort: 'Small',
+        geoGroup: 'technical',
+        technique: 'Contextual links between pages',
+        basedOnQuestions: questionsFor(l, ['p1']),
+        ...OPT({ evidence: 'Site snapshot: the Bengaluru centres list and programme pages have no link to the Brookefield page.', priority: 'high', reason: 'An unlinked page is harder for parents and crawlers to find', why: 'Pages that nothing links to are harder for search systems to find and connect to the brand and location.' }),
+      }),
+    },
+    {
+      key: 'opt-review-link',
+      category: 'offsite',
+      surface: 'web',
+      sourceOwner: 'brand',
+      promptIds: ['p4'],
+      certainty: 'confirmed_gap',
+      observation: 'The centre has genuine parent reviews on its Google Business Profile, but the centre page doesn’t mention or link to them.',
+      snapshot: 'No reviews section or link on the centre page.',
+      recommend: (_f, l) => ({
+        channel: 'owned_website',
+        controlledSource: `Centre page — ${_f.website}`,
+        owner: 'BrightNest website team',
+        title: 'Link the centre page to its genuine Google reviews',
+        brandTitle: 'Link the Brookefield page to your genuine parent reviews',
+        currentText: 'No reviews section or link on the page.',
+        proposedText: `Read what parents say about BrightNest ${l.neighborhood} on our Google Business Profile → (link)`,
+        businessFactIds: [],
+        requiresBrandApproval: true,
+        effort: 'Small',
+        geoGroup: 'trust',
+        technique: 'Point to authentic reviews',
+        basedOnQuestions: questionsFor(l, ['p4']),
+        ...OPT({ evidence: 'Centre-page snapshot has no reviews section; the managed Google Business Profile has genuine parent reviews. No review text, rating or count is copied or invented.', priority: 'medium', reason: 'Connects a “good reviews” question to real reviews', why: 'For “good parent reviews” questions, a clear link from the official page to genuine reviews helps parents and AI find them.' }),
+      }),
+    },
+  ],
+  'electronic-city': [
+    {
+      key: 'opt-sitemap-missing',
+      category: 'crawl_access',
+      surface: 'sitemap',
+      sourceOwner: 'brand',
+      promptIds: ['p1'],
+      certainty: 'confirmed_gap',
+      needsSiteOwner: true,
+      observation: 'The Electronic City centre page is missing from the website’s sitemap.',
+      snapshot: 'sitemap.xml lists 9 Bengaluru centre pages; /centers/electronic-city is not included.',
+      recommend: (f) => ({
+        channel: 'owned_website',
+        controlledSource: 'Sitemap — brightnest.example/sitemap.xml',
+        owner: 'BrightNest website team',
+        title: 'Ask the web team to add the centre page to the sitemap',
+        brandTitle: 'Add the Electronic City page to your sitemap',
+        currentText: 'sitemap.xml: /centers/electronic-city not listed',
+        proposedText: `<url><loc>${f.website}</loc></url>`,
+        businessFactIds: [],
+        requiresBrandApproval: false,
+        effort: 'Small',
+        geoGroup: 'technical',
+        technique: 'Page discoverability (sitemap)',
+        basedOnQuestions: questionsFor(LOCATION_BY_ID['electronic-city'], ['p1']),
+        ...OPT({ evidence: 'Sitemap snapshot: 9 Bengaluru centre pages listed; Electronic City is not. Opening hours stay out of any change until they are verified.', priority: 'medium', reason: 'Helps crawlers find the page; needs your site admin', why: 'A page missing from the sitemap may be crawled less often, so updates reach search and AI systems more slowly.', delivery: 'site_admin_handoff' }),
+      }),
+    },
+  ],
+  marathahalli: [daycareAnswer('opt-daycare', 'Marathahalli', 'BrightNest Marathahalli. Playgroup to UKG.', 'The page lists class names only. It doesn’t describe the centre, its daycare or its hours.', ['p1', 'p3'])],
+  sarjapur: [daycareAnswer('opt-daycare', 'Sarjapur', 'Playgroup · Nursery · LKG · UKG · Daycare', 'Daycare appears as a single word in a list. The page doesn’t answer whether there are extended hours.', ['p3'])],
+}
+
 function defaultSeeds(locationId: string): FindingSeed[] {
   const loc = LOCATION_BY_ID[locationId]
   const sources = sourceRecordsFor(locationId)
@@ -844,7 +1004,7 @@ export interface FindingWithDraft extends ReadinessFinding {
 
 /** Readiness findings for an opportunity from seeded snapshots, evaluated against the current verified facts. */
 export function readinessFindings(opp: Pick<DiscoveryOpportunity, 'id' | 'locationId'>, edits: Record<string, FactEdit>, inspectedAt: string): FindingWithDraft[] {
-  const seeds = SEEDS[opp.locationId] ?? defaultSeeds(opp.locationId)
+  const seeds = SEEDS[opp.locationId] ?? [...defaultSeeds(opp.locationId), ...(OPTIMIZE_SEEDS[opp.locationId] ?? [])]
   const facts = factsOf(opp.locationId, edits)
   const loc = LOCATION_BY_ID[opp.locationId]
   return seeds.map((s) => {
